@@ -1,51 +1,62 @@
-import re, uuid, aiohttp
+# File ke sabse upar jaha imports hain, waha ye line update kar do:
+import re, uuid, aiohttp, random, string, asyncio
 from urllib.parse import quote
 from typing import List, Dict
 from apps.base import BaseApp
 
 class ClassplusApp(BaseApp):
     BASE = "https://api.classplusapp.com"
-    HEADERS = {
-        'host': 'api.classplusapp.com',
-        'accept-language': 'EN',
-        'api-version': '18',
-        'app-version': '1.4.73.2',
-        'build-number': '35',
-        'connection': 'Keep-Alive',
-        'content-type': 'application/json',
-        'device-details': 'Xiaomi_Redmi 7_SDK-32',
-        'device-id': 'c28d3cb16bbdac01',
-        'region': 'IN',
-        'user-agent': 'Mobile-Android',
-        'webengage-luid': '00000187-6fe4-5d41-a530-26186858be4c',
-        'accept-encoding': 'gzip'
-    }
+    
+    # Is function se har user ke liye naya Device ID generate hoga
+    def get_headers(self):
+        random_device_id = ''.join(random.choices(string.digits + string.ascii_lowercase, k=16))
+        return {
+            'host': 'api.classplusapp.com',
+            'accept-language': 'EN',
+            'api-version': '18',
+            'app-version': '1.4.73.2',
+            'build-number': '35',
+            'connection': 'Keep-Alive',
+            'content-type': 'application/json',
+            'device-details': 'Xiaomi_Redmi 7_SDK-32',
+            'device-id': random_device_id,
+            'region': 'IN',
+            'user-agent': 'Mobile-Android',
+            'webengage-luid': str(uuid.uuid4()),
+            'accept-encoding': 'gzip'
+        }
 
     # ---------- OTP LOGIN ----------
     async def login_otp(self, org_code: str, mobile: str) -> Dict:
-        # Step 1: org_id प्राप्त करें
+        headers = self.get_headers() # Dynamic headers call kiya
         async with aiohttp.ClientSession() as sess:
-            async with sess.get(f"{self.BASE}/v2/orgs/{org_code}", headers=self.HEADERS) as r:
+            async with sess.get(f"{self.BASE}/v2/orgs/{org_code}", headers=headers) as r:
                 r.raise_for_status()
                 org_data = await r.json()
             org_id = org_data['data']['orgId']
             org_name = org_data['data']['orgName']
 
-            # Step 2: fingerprintId जनरेट करें (हर लॉगिन के लिए नया या फिक्स्ड)
-            fingerprint_id = uuid.uuid4().hex   # 32 characters
+            fingerprint_id = uuid.uuid4().hex
 
-            # Step 3: OTP भेजें
+            # Step 3: OTP Payload (Email aur Mobile dono ke liye)
             otp_payload = {
                 "countryExt": "91",
-                "mobile": mobile,           # बिना +91 के, सिर्फ 10 अंक
                 "orgCode": org_code,
                 "orgId": org_id,
                 "otpCount": 0,
                 "retry": 0,
-                "viaEmail": "0",
-                "viaSms": "1"
             }
-            async with sess.post(f"{self.BASE}/v2/otp/generate", json=otp_payload, headers=self.HEADERS) as r:
+            
+            if '@' in mobile:
+                otp_payload["email"] = mobile
+                otp_payload["viaEmail"] = "1"
+                otp_payload["viaSms"] = "0"
+            else:
+                otp_payload["mobile"] = mobile
+                otp_payload["viaEmail"] = "0"
+                otp_payload["viaSms"] = "1"
+
+            async with sess.post(f"{self.BASE}/v2/otp/generate", json=otp_payload, headers=headers) as r:
                 r.raise_for_status()
                 otp_resp = await r.json()
             session_id = otp_resp['data']['sessionId']
@@ -62,6 +73,7 @@ class ClassplusApp(BaseApp):
             }
 
     async def verify_otp(self, org_id: int, mobile: str, session_id: int, otp: str, fingerprint_id: str) -> Dict:
+        headers = self.get_headers()
         payload = {
             "otp": otp,
             "countryExt": "91",
@@ -71,7 +83,7 @@ class ClassplusApp(BaseApp):
             "mobile": mobile
         }
         async with aiohttp.ClientSession() as sess:
-            async with sess.post(f"{self.BASE}/v2/users/verify", json=payload, headers=self.HEADERS) as r:
+            async with sess.post(f"{self.BASE}/v2/users/verify", json=payload, headers=headers) as r:
                 r.raise_for_status()
                 data = await r.json()
         token = data['data']['token']
@@ -93,7 +105,7 @@ class ClassplusApp(BaseApp):
 
     # ---------- COURSES ----------
     async def get_courses(self, token: str) -> List[Dict]:
-        headers = self.HEADERS.copy()
+        headers = self.get_headers()
         headers['x-access-token'] = token
         url = f"{self.BASE}/v2/courses?tabCategoryId=1&categoryId=[]"
         async with aiohttp.ClientSession() as sess:
@@ -122,7 +134,7 @@ class ClassplusApp(BaseApp):
         return items
 
     async def _recurse(self, token, course_id, folder_id, folder_path, items):
-        headers = self.HEADERS.copy()
+        headers = self.get_headers()
         headers['x-access-token'] = token
         params = {'courseId': course_id, 'folderId': folder_id, 'storeContentEvent': 'false'}
         url = f"{self.BASE}/v2/course/content/get"
@@ -130,6 +142,10 @@ class ClassplusApp(BaseApp):
             async with sess.get(url, params=params, headers=headers) as r:
                 r.raise_for_status()
                 data = await r.json()
+                
+        # Server limits se bachne ke liye chhota sa delay
+        await asyncio.sleep(0.5)
+        
         for item in data['data']['courseContent']:
             itype = item.get('contentType')
             name = self._sanitize(item.get('name', 'unknown'))
