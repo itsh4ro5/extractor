@@ -5,8 +5,8 @@ class Database:
     def __init__(self, mongo_uri):
         self.client = MongoClient(mongo_uri)
         self.db = self.client["classplus_bot"]
-        self.sessions = self.db["sessions"]  # user_id -> {token, app, org_code, ...}
-        self.tasks = self.db["tasks"]        # download/extract tasks
+        self.sessions = self.db["sessions"]
+        self.tasks = self.db["tasks"]
 
     def save_session(self, user_id, app_name, data):
         self.sessions.update_one(
