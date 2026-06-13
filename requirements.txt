@@ -1,6 +1,8 @@
 playwright
 aiohttp
 aiofiles
-python-telegram-bot==20.0
+python-telegram-bot==20.7
 pycryptodome
-flask
+Flask
+pymongo
+yt-dlp
