@@ -1,11 +1,10 @@
 ---
-title: Classplus Extractor Bot
+title: Extractor
 emoji: 🚀
-colorFrom: green
-colorTo: blue
+colorFrom: blue
+colorTo: red
 sdk: docker
 app_port: 7860
-pinned: false
 ---
 
 # 🚀 Classplus Extractor Bot
