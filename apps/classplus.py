@@ -1,5 +1,4 @@
-import re
-import aiohttp
+import re, uuid, aiohttp
 from urllib.parse import quote
 from typing import List, Dict
 from apps.base import BaseApp
@@ -22,30 +21,85 @@ class ClassplusApp(BaseApp):
         'accept-encoding': 'gzip'
     }
 
+    # ---------- OTP LOGIN ----------
     async def login_otp(self, org_code: str, mobile: str) -> Dict:
-        # orgId निकालने के लिए पहले orgCode से orgId लें (कई बार orgId = orgCode से मैपिंग)
-        # यहाँ हम orgCode "iqvqn" से orgId 9183 लेकर चलेंगे (आपके डेटा से)
-        # असल में API /v1/auth/send-otp अब शायद काम न करे, नया एंडपॉइंट खोजना होगा
-        # हम टोकन लॉगिन को प्राथमिकता देते हैं, क्योंकि OTP एंडपॉइंट बदलता रहता है
-        raise NotImplementedError("OTP login endpoint changed, use token login.")
+        # Step 1: org_id प्राप्त करें
+        async with aiohttp.ClientSession() as sess:
+            async with sess.get(f"{self.BASE}/v2/orgs/{org_code}", headers=self.HEADERS) as r:
+                r.raise_for_status()
+                org_data = await r.json()
+            org_id = org_data['data']['orgId']
+            org_name = org_data['data']['orgName']
 
+            # Step 2: fingerprintId जनरेट करें (हर लॉगिन के लिए नया या फिक्स्ड)
+            fingerprint_id = uuid.uuid4().hex   # 32 characters
+
+            # Step 3: OTP भेजें
+            otp_payload = {
+                "countryExt": "91",
+                "mobile": mobile,           # बिना +91 के, सिर्फ 10 अंक
+                "orgCode": org_code,
+                "orgId": org_id,
+                "otpCount": 0,
+                "retry": 0,
+                "viaEmail": "0",
+                "viaSms": "1"
+            }
+            async with sess.post(f"{self.BASE}/v2/otp/generate", json=otp_payload, headers=self.HEADERS) as r:
+                r.raise_for_status()
+                otp_resp = await r.json()
+            session_id = otp_resp['data']['sessionId']
+
+            # Step 4: OTP इनपुट (बॉट में यह कॉलबैक से आएगा, यहाँ हम रिटर्न करेंगे sessionId ताकि बाद में verify करें)
+            return {
+                'status': 'otp_sent',
+                'org_id': org_id,
+                'org_name': org_name,
+                'session_id': session_id,
+                'fingerprint_id': fingerprint_id,
+                'mobile': mobile,
+                'countryExt': '91'
+            }
+
+    async def verify_otp(self, org_id: int, mobile: str, session_id: int, otp: str, fingerprint_id: str) -> Dict:
+        payload = {
+            "otp": otp,
+            "countryExt": "91",
+            "sessionId": session_id,
+            "orgId": org_id,
+            "fingerprintId": fingerprint_id,
+            "mobile": mobile
+        }
+        async with aiohttp.ClientSession() as sess:
+            async with sess.post(f"{self.BASE}/v2/users/verify", json=payload, headers=self.HEADERS) as r:
+                r.raise_for_status()
+                data = await r.json()
+        token = data['data']['token']
+        refresh_token = data['data'].get('refreshToken')
+        user = data['data']['user']
+        return {
+            'token': token,
+            'refresh_token': refresh_token,
+            'user': user
+        }
+
+    # ---------- TOKEN LOGIN ----------
     async def login_token(self, token: str) -> Dict:
-        # token को verify करें (कोई API नहीं, बस उसे store करें)
-        # user details token से decode करें
         import base64, json
         payload = token.split('.')[1]
         payload += '=' * (4 - len(payload) % 4)
         user = json.loads(base64.urlsafe_b64decode(payload))
         return {'token': token, 'user': user}
 
+    # ---------- COURSES ----------
     async def get_courses(self, token: str) -> List[Dict]:
         headers = self.HEADERS.copy()
         headers['x-access-token'] = token
         url = f"{self.BASE}/v2/courses?tabCategoryId=1&categoryId=[]"
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers) as resp:
-                resp.raise_for_status()
-                data = await resp.json()
+        async with aiohttp.ClientSession() as sess:
+            async with sess.get(url, headers=headers) as r:
+                r.raise_for_status()
+                data = await r.json()
         courses = []
         for c in data['data']['courses']:
             if c.get('isPurchased'):
@@ -56,10 +110,12 @@ class ClassplusApp(BaseApp):
                     'finalPrice': c['finalPrice'],
                     'resources': c['resources'],
                     'orgId': c['orgId'],
+                    'orgCode': None,  # बाद में सेट होगा
                     'expiresAt': c.get('expiresAt')
                 })
         return courses
 
+    # ---------- EXTRACT COURSE ----------
     async def extract_course(self, token: str, course_id: str) -> List[Dict]:
         items = []
         await self._recurse(token, course_id, 0, "", items)
@@ -68,25 +124,26 @@ class ClassplusApp(BaseApp):
     async def _recurse(self, token, course_id, folder_id, folder_path, items):
         headers = self.HEADERS.copy()
         headers['x-access-token'] = token
-        url = f"{self.BASE}/v2/course/content/get"
         params = {'courseId': course_id, 'folderId': folder_id, 'storeContentEvent': 'false'}
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, params=params, headers=headers) as resp:
-                resp.raise_for_status()
-                data = await resp.json()
+        url = f"{self.BASE}/v2/course/content/get"
+        async with aiohttp.ClientSession() as sess:
+            async with sess.get(url, params=params, headers=headers) as r:
+                r.raise_for_status()
+                data = await r.json()
         for item in data['data']['courseContent']:
             itype = item.get('contentType')
             name = self._sanitize(item.get('name', 'unknown'))
-            if itype == 1:  # folder
-                await self._recurse(token, course_id, item['id'], f"{folder_path}/{name}" if folder_path else name, items)
-            elif itype == 2:  # video
+            if itype == 1:
+                await self._recurse(token, course_id, item['id'],
+                                    f"{folder_path}/{name}" if folder_path else name, items)
+            elif itype == 2:
                 items.append({
                     'type': 'video',
                     'name': name,
                     'folder': folder_path,
                     'contentHashId': item.get('contentHashId')
                 })
-            elif itype == 3:  # pdf
+            elif itype == 3:
                 items.append({
                     'type': 'pdf',
                     'name': name,
@@ -99,9 +156,9 @@ class ClassplusApp(BaseApp):
         headers['x-access-token'] = token
         encoded = quote(content_hash_id, safe='')
         url = f"{self.BASE}/cams/uploader/video/jw-signed-url?contentId={encoded}"
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers) as resp:
-                data = await resp.json()
+        async with aiohttp.ClientSession() as sess:
+            async with sess.get(url, headers=headers) as r:
+                data = await r.json()
                 if not data.get('url'):
                     raise Exception(f"Signed URL not found: {data}")
                 return data['url']
