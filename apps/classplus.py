@@ -168,7 +168,7 @@ class ClassplusApp(BaseApp):
                 })
 
     async def get_signed_url(self, token, content_hash_id):
-        headers = self.HEADERS.copy()
+        headers = self.get_headers() # <--- ISKO UPDATE KARO
         headers['x-access-token'] = token
         encoded = quote(content_hash_id, safe='')
         url = f"{self.BASE}/cams/uploader/video/jw-signed-url?contentId={encoded}"
