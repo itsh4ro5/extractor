@@ -3,3 +3,4 @@ aiohttp
 aiofiles
 python-telegram-bot==20.0
 pycryptodome
+flask
