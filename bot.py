@@ -271,8 +271,12 @@ async def process_drm_upload(client, user_chat_id, user_id, links, start_idx, qu
                 filename = f"Vid_{i}.mp4"
                 fmt = f"bestvideo[height<={quality}]+bestaudio/best/best"
                 
+                # FIXED: Added Headers to Bypass 403 Forbidden Error
                 cmd = [
                     "yt-dlp", "--no-warnings", 
+                    "--add-header", "User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "--add-header", "Origin:https://web.classplusapp.com",
+                    "--add-header", "Referer:https://web.classplusapp.com/",
                     "-f", fmt, 
                     "--merge-output-format", "mp4", 
                     "-o", filename, 
@@ -329,7 +333,6 @@ async def process_drm_upload(client, user_chat_id, user_id, links, start_idx, qu
     
     stop_flags[user_id] = False
     active_processes[user_id] = None
-
 # ---------- MAIN EXECUTION ----------
 def main():
     threading.Thread(target=run_web, daemon=True).start()
