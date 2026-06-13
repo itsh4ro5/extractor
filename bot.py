@@ -57,13 +57,13 @@ async def start_cmd(client, message):
     await message.reply(welcome_text, reply_markup=keyboard)
 
 # ---------- Interactive Login Flow ----------
+# ---------- Interactive Login Flow ----------
 @app.on_callback_query(filters.regex("btn_cp"))
 async def cp_login(client, callback_query):
     await callback_query.answer()
     chat = callback_query.message.chat
     user_id = callback_query.from_user.id
     
-    # Pyromod magic: Ask directly in chat
     res = await chat.ask("🔑 Send `org_code*mobile` (For OTP) OR send your Auth Token:")
     text = res.text.strip()
     cp_app = app_registry["cp"]
@@ -76,7 +76,8 @@ async def cp_login(client, callback_query):
             otp_res = await chat.ask("📱 Send the OTP received on mobile:")
             otp = otp_res.text.strip()
             
-            msg = await chat.send_message("⏳ Verifying...")
+            # FIXED: 'chat.send_message' se 'client.send_message' kar diya gaya hai
+            msg = await client.send_message(chat.id, "⏳ Verifying...")
             
             result = await cp_app.verify_otp(
                 org_id=otp_info['org_id'], mobile=otp_info['mobile'],
@@ -86,15 +87,15 @@ async def cp_login(client, callback_query):
             db.save_session(user_id, "cp", {"token": result['token'], "user": result['user']})
             await msg.edit_text("✅ **Login successful!** You can now use `/extract cp <id>`.")
         except Exception as e:
-            await chat.send_message(f"❌ OTP Login failed: {e}")
+            await client.send_message(chat.id, f"❌ OTP Login failed: {e}")
     else:
         token = text
         try:
             result = await cp_app.login_token(token)
             db.save_session(user_id, "cp", {"token": token, "user": result['user']})
-            await chat.send_message("✅ **Token Login successful!**")
+            await client.send_message(chat.id, "✅ **Token Login successful!**")
         except Exception as e:
-            await chat.send_message(f"❌ Error: {e}")
+            await client.send_message(chat.id, f"❌ Error: {e}")
 
 # ---------- TXT File Extractor ----------
 @app.on_message(filters.command("extract"))
@@ -139,22 +140,18 @@ async def extract_cmd(client, message):
 # ==========================================
 # 🚀 2GB HD DRM UPLOADER FLOW (TXT -> CHANNEL)
 # ==========================================
-# ==========================================
-# 🚀 2GB HD DRM UPLOADER FLOW (TXT -> CHANNEL)
-# ==========================================
 @app.on_message(filters.command("drm"))
 async def drm_cmd(client, message):
     chat = message.chat
     
     try:
-        # Step 1: Get TXT File
         txt_msg = await chat.ask("📄 **Step 1:** Please send the extracted `.txt` file.")
         if not txt_msg.document or not txt_msg.document.file_name.endswith('.txt'):
-            return await chat.send_message("❌ Please send a valid .txt file. Run /drm again.")
+            # FIXED YAHAN BHI
+            return await client.send_message(chat.id, "❌ Please send a valid .txt file. Run /drm again.")
             
-        # 🔥 YAHAN BATCH NAME DYNAMICALLY NIKALA GAYA HAI TXT FILE KE NAAM SE
         file_name = txt_msg.document.file_name
-        batch_name = file_name.rsplit('.', 1)[0].strip() # '.txt' hata kar batch name banaya
+        batch_name = file_name.rsplit('.', 1)[0].strip() 
             
         file_path = await txt_msg.download()
         with open(file_path, 'r', encoding='utf-8') as f:
@@ -171,31 +168,26 @@ async def drm_cmd(client, message):
                 parsed_links.append({"name": name, "url": url, "is_pdf": is_pdf})
                 
         if not parsed_links:
-            return await chat.send_message("❌ No valid links found in the TXT file.")
+            return await client.send_message(chat.id, "❌ No valid links found in the TXT file.")
             
-        # Step 2: Get Index
         idx_msg = await chat.ask(f"✅ Found **{len(parsed_links)}** items in `{batch_name}`.\n\n🔢 **Step 2:** Enter Starting Index Number (e.g., `1`):")
         start_idx = int(idx_msg.text.strip()) - 1
         
-        # Step 3: Get Quality
         qual_msg = await chat.ask("⚙️ **Step 3:** Enter video quality (e.g., `480`, `720`, `1080`):")
         quality = qual_msg.text.strip().replace('p', '')
         
-        # Step 4: Get Name
         name_msg = await chat.ask("👤 **Step 4:** Enter Extractor/Uploader Name (For caption):")
         ext_name = name_msg.text.strip()
         
-        # Step 5: Get Chat ID
         chat_msg = await chat.ask("📢 **Step 5:** Enter Target Channel's Chat ID (e.g., `-100123456789`):\n*(Bot must be admin!)*")
         target_chat_id = int(chat_msg.text.strip())
         
-        await chat.send_message("🚀 **All set!** The bulk download & HD upload process has started in the background.")
+        await client.send_message(chat.id, "🚀 **All set!** The bulk download & HD upload process has started in the background.")
         
-        # Background process start (Yahan batch_name bhi pass kar diya)
         asyncio.create_task(process_drm_upload(client, chat.id, parsed_links, start_idx, quality, ext_name, target_chat_id, batch_name))
     
     except Exception as e:
-        await chat.send_message(f"❌ DRM Setup Cancelled or Failed: {e}")
+        await client.send_message(chat.id, f"❌ DRM Setup Cancelled or Failed: {e}")
 
 # ---------- BATCH_NAME PARAMETER ADD KIYA GAYA ----------
 async def process_drm_upload(client, user_chat_id, links, start_idx, quality, ext_name, target_chat_id, batch_name):
