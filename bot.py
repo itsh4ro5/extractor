@@ -1,203 +1,245 @@
 import os, asyncio, threading, logging
-from urllib.parse import quote
 from flask import Flask
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
+from pyrogram import Client, filters
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+import pyromod.listen  # Ye module chat.ask() ko enable karta hai
+
 from apps.classplus import ClassplusApp
 from core.database import Database
 
-# Logging configuration
+# ---------- Logging Configuration ----------
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
-logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("pyrogram").setLevel(logging.WARNING)
 
+# ---------- ENV Variables (HG Secrets) ----------
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
+API_ID = int(os.environ.get("API_ID", "0"))
+API_HASH = os.environ.get("API_HASH", "")
 MONGO_URI = os.environ.get("MONGO_URI", "")
 
 app_registry = {"cp": ClassplusApp()}
 db = Database(MONGO_URI)
 
+# ---------- Web Server (Hugging Face) ----------
 web = Flask(__name__)
 @web.route('/')
 def index():
-    return "Extractor Bot Running"
+    return "Pyrogram 2GB DRM Bot Running"
 def run_web():
     web.run(host='0.0.0.0', port=7860)
 
-# ---------- Grid UI Flow ----------
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Same UI Grid as shown in your video
-    keyboard = [
-        [InlineKeyboardButton("Adda247", callback_data="none"), InlineKeyboardButton("AppX", callback_data="none"), InlineKeyboardButton("ClassPlus", callback_data="btn_cp")],
-        [InlineKeyboardButton("Edukemy", callback_data="none"), InlineKeyboardButton("Graphy", callback_data="none"), InlineKeyboardButton("IAS Hub", callback_data="none")],
-        [InlineKeyboardButton("Khan GS", callback_data="none"), InlineKeyboardButton("LeanPrep", callback_data="none"), InlineKeyboardButton("OliveBoard", callback_data="none")],
-        [InlineKeyboardButton("Physics Wallah", callback_data="none"), InlineKeyboardButton("StudyIQ", callback_data="none"), InlineKeyboardButton("Tarun Grover", callback_data="none")],
-        [InlineKeyboardButton("TestBook", callback_data="none"), InlineKeyboardButton("TopRankers", callback_data="none"), InlineKeyboardButton("Utkarsh", callback_data="none")],
-        [InlineKeyboardButton("Law Prep", callback_data="none"), InlineKeyboardButton("Virtuous", callback_data="none"), InlineKeyboardButton("TLS", callback_data="none")],
-        [InlineKeyboardButton("Bot Plans", callback_data="none")],
-        [InlineKeyboardButton("Without ID", callback_data="none")],
-        [InlineKeyboardButton("Developer", url="https://t.me/itsh4ro5")] # Yahan apna username daal sakte ho
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    welcome_text = "⚡ **Select Platform**\n\nChoose an option below"
-    
-    if update.message:
-        await update.message.reply_text(welcome_text, reply_markup=reply_markup, parse_mode='Markdown')
-    elif update.callback_query:
-        await update.callback_query.message.edit_text(welcome_text, reply_markup=reply_markup, parse_mode='Markdown')
+# ---------- Init Pyrogram Bot ----------
+app = Client(
+    "extractor_bot",
+    api_id=API_ID,
+    api_hash=API_HASH,
+    bot_token=BOT_TOKEN
+)
 
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    if query.data == "btn_cp":
-        await query.message.reply_text("Send org_code*mobile or token")
-        context.user_data['action'] = 'cp_login_creds'
-    elif query.data == "none":
-        await query.answer("Working on it... Not implemented yet.", show_alert=True)
+# ---------- Start Command ----------
+@app.on_message(filters.command("start"))
+async def start_cmd(client, message):
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("Login (ClassPlus)", callback_data="btn_cp")],
+        [InlineKeyboardButton("Developer", url="https://t.me/itsh4ro5")] 
+    ])
+    welcome_text = (
+        "⚡ **Welcome to 2GB Pro Extractor Bot**\n\n"
+        "Options:\n"
+        "1. Click the button below to login.\n"
+        "2. Use `/extract cp <course_id>` to get TXT.\n"
+        "3. Use `/drm` to bulk download & upload HD videos to channel."
+    )
+    await message.reply(welcome_text, reply_markup=keyboard)
 
-# ---------- Login & OTP Flow ----------
-async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    action = context.user_data.get('action')
-    text = update.message.text.strip()
-    user_id = update.effective_user.id
+# ---------- Interactive Login Flow ----------
+@app.on_callback_query(filters.regex("btn_cp"))
+async def cp_login(client, callback_query):
+    await callback_query.answer()
+    chat = callback_query.message.chat
+    user_id = callback_query.from_user.id
     
-    if action == 'cp_login_creds':
-        if '*' in text:
-            try:
-                org_code, mobile = text.split('*')
-                app = app_registry.get("cp")
-                otp_info = await app.login_otp(org_code, mobile)
-                context.user_data['otp_info'] = otp_info
-                context.user_data['action'] = 'cp_login_otp'
-                await update.message.reply_text("Send OTP")
-            except Exception as e:
-                await update.message.reply_text(f"❌ Error: {e}")
-                context.user_data['action'] = None
-        else:
-            token = text
-            app = app_registry.get("cp")
-            try:
-                result = await app.login_token(token)
-                db.save_session(user_id, "cp", {"token": token, "user": result['user']})
-                await update.message.reply_text(f"✅ Login successful!")
-                context.user_data['action'] = None
-            except Exception as e:
-                await update.message.reply_text(f"❌ Error: {e}")
-                context.user_data['action'] = None
+    # Pyromod magic: Ask directly in chat
+    res = await chat.ask("🔑 Send `org_code*mobile` (For OTP) OR send your Auth Token:")
+    text = res.text.strip()
+    cp_app = app_registry["cp"]
 
-    elif action == 'cp_login_otp':
-        otp = text
-        otp_info = context.user_data.get('otp_info')
-        app = app_registry.get("cp")
-        msg = await update.message.reply_text("⏳ Verifying...")
+    if '*' in text:
         try:
-            result = await app.verify_otp(
-                org_id=otp_info['org_id'],
-                mobile=otp_info['mobile'],
-                session_id=otp_info['session_id'],
-                otp=otp,
+            org_code, mobile = text.split('*')
+            otp_info = await cp_app.login_otp(org_code, mobile)
+            
+            otp_res = await chat.ask("📱 Send the OTP received on mobile:")
+            otp = otp_res.text.strip()
+            
+            msg = await chat.send_message("⏳ Verifying...")
+            
+            result = await cp_app.verify_otp(
+                org_id=otp_info['org_id'], mobile=otp_info['mobile'],
+                session_id=otp_info['session_id'], otp=otp,
                 fingerprint_id=otp_info['fingerprint_id']
             )
             db.save_session(user_id, "cp", {"token": result['token'], "user": result['user']})
-            context.user_data['action'] = None
-            
-            # Login hote hi courses list fetch karna
-            courses_list = await app.get_courses(result['token'])
-            if courses_list:
-                c_msg = "✅ **Login successful! Your Courses:**\n\n"
-                for c in courses_list:
-                    c_msg += f"🆔 `{c['id']}` - {c['name']}\n"
-                c_msg += "\nType `/extract cp <courseId>` to get content."
-                await msg.edit_text(c_msg, parse_mode='Markdown')
-            else:
-                await msg.edit_text("❌ NO COURSES FOUND")
+            await msg.edit_text("✅ **Login successful!** You can now use `/extract cp <id>`.")
         except Exception as e:
-            await msg.edit_text(f"❌ OTP verification failed: {e}")
-            context.user_data['action'] = None
+            await chat.send_message(f"❌ OTP Login failed: {e}")
+    else:
+        token = text
+        try:
+            result = await cp_app.login_token(token)
+            db.save_session(user_id, "cp", {"token": token, "user": result['user']})
+            await chat.send_message("✅ **Token Login successful!**")
+        except Exception as e:
+            await chat.send_message(f"❌ Error: {e}")
 
-# Function me 'app' pass karna padega taaki API call ho sake
-async def generate_content_txt(items, token, app):
-    lines = ["📚 COURSE CONTENT:\n"]
-    for item in items:
-        name = str(item['name']).replace("|", "_").replace(":", "-").strip()
-        folder = str(item.get('folder', '')).replace("/", " → ").strip()
-        
-        if item['type'] == 'video':
-            try:
-                # Classplus API se directly pura m3u8 link nikalna (Jisme token already hota hai)
-                link = await app.get_signed_url(token, item['contentHashId'])
-            except Exception as e:
-                link = f"ERROR Fetching Link: {e}"
-            
-            if folder:
-                lines.append(f"[{folder} ] {name} : {link}")
-            else:
-                lines.append(f"[{name}] : {link}")
-        else:
-            link = item.get('url', '')
-            if folder:
-                lines.append(f"[{folder}  → PDF ] {name} : {link}")
-            else:
-                lines.append(f"[{name} → PDF ] : {link}")
-    return '\n'.join(lines)
-
-# ---------- Extractor ----------
-async def extract(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    args = update.message.text.split()
+# ---------- TXT File Extractor ----------
+@app.on_message(filters.command("extract"))
+async def extract_cmd(client, message):
+    args = message.text.split()
     if len(args) < 3:
-        await update.message.reply_text("Usage: /extract cp <courseId>")
-        return
-    app_name = args[1].lower()
-    course_id = args[2]
+        return await message.reply("Usage: `/extract cp <courseId>`")
     
-    app = app_registry.get(app_name)
-    user_id = update.effective_user.id
+    app_name, course_id = args[1].lower(), args[2]
+    cp_app = app_registry.get(app_name)
+    user_id = message.from_user.id
     session = db.get_session(user_id, app_name)
     
     if not session or not session.get('token'):
-        await update.message.reply_text("Please login first.")
-        return
+        return await message.reply("❌ Please login first.")
         
     token = session['token']
-    msg = await update.message.reply_text("⏳ Extracting course content... (This might take a while)")
+    msg = await message.reply("⏳ Extracting content... Please wait.")
     
     try:
-        items = await app.extract_course(token, course_id)
-        # Yahan 'app' ko pass kiya taaki upar wale function me API call ho sake
-        txt = await generate_content_txt(items, token, app) 
-        
+        items = await cp_app.extract_course(token, course_id)
+        lines = ["📚 COURSE CONTENT:\n"]
+        for item in items:
+            name = str(item['name']).replace("|", "_").replace(":", "-").strip()
+            if item['type'] == 'video':
+                link = await cp_app.get_signed_url(token, item['contentHashId'])
+                lines.append(f"[{name}] : {link}")
+            else:
+                lines.append(f"[{name} → PDF] : {item.get('url', '')}")
+                
+        txt = '\n'.join(lines)
         filename = f"{course_id}.txt"
         with open(filename, 'w', encoding='utf-8') as f:
             f.write(txt)
             
-        await update.message.reply_document(document=open(filename, 'rb'))
-        await msg.edit_text(f"✅ Extracted {len(items)} items. File sent.")
+        await message.reply_document(document=filename, caption=f"✅ Extracted {len(items)} items.")
+        await msg.delete()
         os.remove(filename)
     except Exception as e:
         await msg.edit_text(f"❌ Error: {e}")
+
+# ==========================================
+# 🚀 2GB HD DRM UPLOADER FLOW (TXT -> CHANNEL)
+# ==========================================
+@app.on_message(filters.command("drm"))
+async def drm_cmd(client, message):
+    chat = message.chat
+    
+    try:
+        # Step 1: Get TXT File
+        txt_msg = await chat.ask("📄 **Step 1:** Please send the extracted `.txt` file.")
+        if not txt_msg.document or not txt_msg.document.file_name.endswith('.txt'):
+            return await chat.send_message("❌ Please send a valid .txt file. Run /drm again.")
+            
+        file_path = await txt_msg.download()
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.readlines()
+        os.remove(file_path)
+        
+        parsed_links = []
+        for line in content:
+            if " : http" in line:
+                parts = line.split(" : http", 1)
+                name = parts[0].strip().replace("[", "").replace("]", "")
+                url = "http" + parts[1].strip()
+                is_pdf = "PDF" in name
+                parsed_links.append({"name": name, "url": url, "is_pdf": is_pdf})
+                
+        if not parsed_links:
+            return await chat.send_message("❌ No valid links found in the TXT file.")
+            
+        # Step 2: Get Index
+        idx_msg = await chat.ask(f"✅ Found **{len(parsed_links)}** items.\n\n🔢 **Step 2:** Enter Starting Index Number (e.g., `1`):")
+        start_idx = int(idx_msg.text.strip()) - 1
+        
+        # Step 3: Get Quality
+        qual_msg = await chat.ask("⚙️ **Step 3:** Enter video quality (e.g., `480`, `720`, `1080`):")
+        quality = qual_msg.text.strip().replace('p', '')
+        
+        # Step 4: Get Name
+        name_msg = await chat.ask("👤 **Step 4:** Enter Extractor/Uploader Name (For caption):")
+        ext_name = name_msg.text.strip()
+        
+        # Step 5: Get Chat ID
+        chat_msg = await chat.ask("📢 **Step 5:** Enter Target Channel's Chat ID (e.g., `-100123456789`):\n*(Bot must be admin!)*")
+        target_chat_id = int(chat_msg.text.strip())
+        
+        await chat.send_message("🚀 **All set!** The bulk download & 2GB upload process has started in the background.")
+        
+        # Background process start
+        asyncio.create_task(process_drm_upload(client, chat.id, parsed_links, start_idx, quality, ext_name, target_chat_id))
+    
+    except Exception as e:
+        await chat.send_message(f"❌ DRM Setup Cancelled or Failed: {e}")
+
+async def process_drm_upload(client, user_chat_id, links, start_idx, quality, ext_name, target_chat_id):
+    for i in range(start_idx, len(links)):
+        item = links[i]
+        item_name = item['name']
+        url = item['url']
+        caption = f"🎥 **{item_name}**\n\n📤 **Extracted by:** {ext_name}"
+        
+        status_msg = await client.send_message(user_chat_id, f"📥 Downloading ({i+1}/{len(links)}): {item_name}")
+        
+        try:
+            if item['is_pdf']:
+                filename = f"Doc_{i}.pdf"
+                import aiohttp
+                async with aiohttp.ClientSession() as sess:
+                    async with sess.get(url) as r:
+                        with open(filename, 'wb') as f: f.write(await r.read())
+                
+                await status_msg.edit_text(f"📤 Uploading PDF to channel: {item_name}")
+                await client.send_document(target_chat_id, document=filename, caption=caption)
+                os.remove(filename)
+                
+            else:
+                filename = f"Vid_{i}.mp4"
+                fmt = f"bestvideo[height<={quality}]+bestaudio/best"
+                cmd = ["yt-dlp", "--no-warnings", "-f", fmt, "--merge-output-format", "mp4", "-o", filename, url]
+                
+                process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+                await process.communicate()
+                
+                if process.returncode == 0 and os.path.exists(filename):
+                    await status_msg.edit_text(f"📤 Uploading HD Video to channel: {item_name}...")
+                    await client.send_video(target_chat_id, video=filename, caption=caption, supports_streaming=True)
+                    os.remove(filename)
+                else:
+                    await client.send_message(user_chat_id, f"❌ Download failed for: {item_name}")
+                    
+            await status_msg.delete()
+            
+        except Exception as e:
+            await client.send_message(user_chat_id, f"❌ Error on {item_name}: {e}")
+            if os.path.exists(f"Vid_{i}.mp4"): os.remove(f"Vid_{i}.mp4")
+            if os.path.exists(f"Doc_{i}.pdf"): os.remove(f"Doc_{i}.pdf")
+            
+    await client.send_message(user_chat_id, "🎉 **DRM Upload Task Completed Successfully!**")
+
+# ---------- MAIN EXECUTION ----------
 def main():
+    # Web server start
     threading.Thread(target=run_web, daemon=True).start()
-    
-    # Ye proxy URL lagana zaruri hai Telegram block bypass karne ke liye
-    CLOUDFLARE_URL = "https://proud-night-5540.itsh4r06.workers.dev/bot" 
-    
-    app = (
-        Application.builder()
-        .token(BOT_TOKEN)
-        .base_url(CLOUDFLARE_URL) # <--- YE LINE MISSING THI
-        .connect_timeout(30.0)
-        .read_timeout(30.0)
-        .write_timeout(30.0)
-        .pool_timeout(30.0)
-        .build()
-    )
+    print("Starting Pyrogram Bot...")
+    # App run (handles event loop internally)
+    app.run()
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("extract", extract))
-    app.add_handler(CallbackQueryHandler(button_handler))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
-
-    print("Bot polling...")
-    app.run_polling()
+if __name__ == "__main__":
+    main()
