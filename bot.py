@@ -1,7 +1,7 @@
 import os, asyncio, threading
 from flask import Flask
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler, CallbackQueryHandler
 from apps.classplus import ClassplusApp
 from core.database import Database
 
@@ -23,17 +23,101 @@ def index():
 def run_web():
     web.run(host='0.0.0.0', port=7860)
 
-# ---------- Bot Commands ----------
+# ---------- Bot Commands & Welcome Menu ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "👋 Welcome to Classplus Extractor!\n\n"
-        "🔐 **Login methods:**\n"
-        "1. OTP: `/login cp iqvqn 6205734170`\n"
-        "2. Token: `/login cp <your_token>`\n\n"
-        "📚 `/courses cp` - list purchased courses\n"
-        "📄 `/extract cp <courseId>` - extract content to text file"
-    , parse_mode='Markdown')
+    # Interactive Buttons banaye gye hain
+    keyboard = [
+        [
+            InlineKeyboardButton("🔐 Login Instructions", callback_data="btn_login_help"),
+            InlineKeyboardButton("📚 My Courses", callback_data="btn_courses")
+        ],
+        [
+            InlineKeyboardButton("📄 How to Extract", callback_data="btn_extract_help")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    welcome_text = (
+        "╭━━━━━━━━━━━━━━━━━━━━━━━━━✦\n"
+        "┃ 👋 **Welcome to Classplus Extractor Bot!**\n"
+        "┃ 🚀 *Unlock and extract your courses instantly.*\n"
+        "╰━━━━━━━━━━━━━━━━━━━━━━━━━✦\n\n"
+        "✨ **Niche diye gaye buttons ka use karke bot ko aaram se chalayein:**"
+    )
+    
+    # Check ki start command message se aaya hai ya button click se back hoke aaya hai
+    if update.message:
+        await update.message.reply_text(welcome_text, reply_markup=reply_markup, parse_mode='Markdown')
+    elif update.callback_query:
+        await update.callback_query.message.edit_text(welcome_text, reply_markup=reply_markup, parse_mode='Markdown')
 
+# ---------- Callback Query Handler (Button Clicking Logic) ----------
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = update.effective_user.id
+    
+    if query.data == "btn_login_help":
+        login_text = (
+            "🔐 **Login Kaise Karein:**\n\n"
+            "👉 **Method 1: OTP Login**\n"
+            "Niche diye gaye format me chat me message send karein:\n"
+            "`/login cp <orgCode> <mobile>`\n"
+            "*Example:* `/login cp iqvqn 6205734170`\n\n"
+            "👉 **Method 2: Token Login**\n"
+            "Niche diye gaye format me message send karein:\n"
+            "`/login cp <your_token>`"
+        )
+        keyboard = [[InlineKeyboardButton("🔙 Back to Main Menu", callback_data="btn_main_menu")]]
+        await query.message.edit_text(login_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        
+    elif query.data == "btn_courses":
+        session = db.get_session(user_id, "cp")
+        if not session or not session.get('token'):
+            keyboard = [[InlineKeyboardButton("🔙 Back to Main Menu", callback_data="btn_main_menu")]]
+            await query.message.edit_text("❌ **Aap logged in nahi hain!**\nPehle login instructions wale button par click karke login karein.", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+            return
+        
+        token = session['token']
+        try:
+            await query.message.edit_text("⏳ Fetching your purchased courses...")
+            app = app_registry.get("cp")
+            courses_list = await app.get_courses(token)
+            if not courses_list:
+                keyboard = [[InlineKeyboardButton("🔙 Back to Main Menu", callback_data="btn_main_menu")]]
+                await query.message.edit_text("📋 No purchased courses found.", reply_markup=InlineKeyboardMarkup(keyboard))
+                return
+            
+            msg = "📋 **Your Purchased Courses:**\n\n"
+            for c in courses_list:
+                msg += f"🆔 Code: `{c['id']}`\n📚 Name: *{c['name']}* (₹{c['finalPrice']})\n\n"
+            
+            msg += "✨ *Course content extract karne ke liye niche diye gaye Extract button par click karein ya `/extract cp <courseId>` write karein.*"
+            
+            context.user_data['courses'] = courses_list
+            keyboard = [
+                [InlineKeyboardButton("📄 Extract Content", callback_data="btn_extract_help")],
+                [InlineKeyboardButton("🔙 Back to Main Menu", callback_data="btn_main_menu")]
+            ]
+            await query.message.edit_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        except Exception as e:
+            keyboard = [[InlineKeyboardButton("🔙 Back to Main Menu", callback_data="btn_main_menu")]]
+            await query.message.edit_text(f"❌ Error fetching courses: {e}", reply_markup=InlineKeyboardMarkup(keyboard))
+            
+    elif query.data == "btn_extract_help":
+        extract_text = (
+            "📄 **Course Content Extract Kaise Karein:**\n\n"
+            "Niche diye gaye format me normal chat me text text send karein:\n"
+            "`/extract cp <courseId>`\n\n"
+            "💡 *Tip: Course ID aapko 'My Courses' wale section se mil jayegi.*"
+        )
+        keyboard = [[InlineKeyboardButton("🔙 Back to Main Menu", callback_data="btn_main_menu")]]
+        await query.message.edit_text(extract_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        
+    elif query.data == "btn_main_menu":
+        await start(update, context)
+
+# ---------- Existing Command Functions ----------
 async def login(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = update.message.text.split()
     if len(args) < 2:
@@ -46,7 +130,7 @@ async def login(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     user_id = update.effective_user.id
 
-    if len(args) == 4:   # OTP login: /login cp iqvqn 6205734170
+    if len(args) == 4:   # OTP login
         org_code = args[2]
         mobile = args[3]
         try:
@@ -59,7 +143,7 @@ async def login(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"❌ OTP send failed: {e}")
             return ConversationHandler.END
 
-    elif len(args) == 3:   # Token login: /login cp eyJ...
+    elif len(args) == 3:   # Token login
         token = args[2]
         try:
             result = await app.login_token(token)
@@ -148,11 +232,9 @@ async def extract(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = await update.message.reply_text("⏳ Extracting course content...")
     try:
         items = await app.extract_course(token, course_id)
-        # Get course info for header
         courses = context.user_data.get('courses') or await app.get_courses(token)
         course_info = next((c for c in courses if str(c['id']) == course_id), None)
         if not course_info:
-            # try to get from session's user orgCode
             org_code = session.get('user', {}).get('orgCode', '')
             course_info = {'id': course_id, 'name': 'Unknown', 'finalPrice': '?', 'resources': {'videos': 0, 'files': 0, 'tests': 0}, 'orgCode': org_code}
         txt = await generate_content_txt(course_info, items, token, app)
@@ -192,7 +274,6 @@ async def main():
     threading.Thread(target=run_web, daemon=True).start()
     app = Application.builder().token(BOT_TOKEN).build()
 
-    # Conversation handler for OTP
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('login', login)],
         states={WAIT_OTP: [MessageHandler(filters.TEXT & ~filters.COMMAND, otp_input)]},
@@ -202,6 +283,9 @@ async def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("courses", courses))
     app.add_handler(CommandHandler("extract", extract))
+    
+    # Callback query handler add kiya taaki button work karein
+    app.add_handler(CallbackQueryHandler(button_handler))
 
     print("Bot polling...")
     await app.run_polling()
