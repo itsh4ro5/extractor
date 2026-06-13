@@ -117,18 +117,19 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await msg.edit_text(f"❌ OTP verification failed: {e}")
             context.user_data['action'] = None
 
-# ---------- TXT File Formatter ----------
-async def generate_content_txt(items, token):
+# Function me 'app' pass karna padega taaki API call ho sake
+async def generate_content_txt(items, token, app):
     lines = ["📚 COURSE CONTENT:\n"]
     for item in items:
         name = str(item['name']).replace("|", "_").replace(":", "-").strip()
         folder = str(item.get('folder', '')).replace("/", " → ").strip()
         
         if item['type'] == 'video':
-            base_url = item.get('url', '').split('?')[0] if item.get('url') else ""
-            encoded_hash = quote(item.get('contentHashId', ''), safe='')
-            # Exact base URL with contentHashId and token appending
-            link = f"{base_url}?contentHashId={encoded_hash}&token={token}"
+            try:
+                # Classplus API se directly pura m3u8 link nikalna (Jisme token already hota hai)
+                link = await app.get_signed_url(token, item['contentHashId'])
+            except Exception as e:
+                link = f"ERROR Fetching Link: {e}"
             
             if folder:
                 lines.append(f"[{folder} ] {name} : {link}")
@@ -164,7 +165,8 @@ async def extract(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     try:
         items = await app.extract_course(token, course_id)
-        txt = await generate_content_txt(items, token)
+        # Yahan 'app' ko pass kiya taaki upar wale function me API call ho sake
+        txt = await generate_content_txt(items, token, app) 
         
         filename = f"{course_id}.txt"
         with open(filename, 'w', encoding='utf-8') as f:
@@ -175,13 +177,16 @@ async def extract(update: Update, context: ContextTypes.DEFAULT_TYPE):
         os.remove(filename)
     except Exception as e:
         await msg.edit_text(f"❌ Error: {e}")
-
 def main():
     threading.Thread(target=run_web, daemon=True).start()
+    
+    # Ye proxy URL lagana zaruri hai Telegram block bypass karne ke liye
+    CLOUDFLARE_URL = "https://proud-night-5540.itsh4r06.workers.dev/bot" 
     
     app = (
         Application.builder()
         .token(BOT_TOKEN)
+        .base_url(CLOUDFLARE_URL) # <--- YE LINE MISSING THI
         .connect_timeout(30.0)
         .read_timeout(30.0)
         .write_timeout(30.0)
@@ -196,6 +201,3 @@ def main():
 
     print("Bot polling...")
     app.run_polling()
-
-if __name__ == "__main__":
-    main()
