@@ -276,7 +276,16 @@ def main():
     threading.Thread(target=run_web, daemon=True).start()
     
     # Bot application build karein
-    app = Application.builder().token(BOT_TOKEN).build()
+    # Bot application build karein (With Increased Timeouts for Cloud)
+    app = (
+        Application.builder()
+        .token(BOT_TOKEN)
+        .connect_timeout(30.0)
+        .read_timeout(30.0)
+        .write_timeout(30.0)
+        .pool_timeout(30.0)
+        .build()
+    )
 
     # Handlers add karein
     conv_handler = ConversationHandler(
