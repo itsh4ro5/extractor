@@ -4,7 +4,13 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler, CallbackQueryHandler
 from apps.classplus import ClassplusApp
 from core.database import Database
+import logging
 
+# Logging configuration (Errors terminal me dikhane ke liye)
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+)
+logging.getLogger("httpx").setLevel(logging.WARNING)
 # ---------- ENV ----------
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 MONGO_URI = os.environ["MONGO_URI"]
@@ -25,7 +31,6 @@ def run_web():
 
 # ---------- Bot Commands & Welcome Menu ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Interactive Buttons banaye gye hain
     keyboard = [
         [
             InlineKeyboardButton("🔐 Login Instructions", callback_data="btn_login_help"),
@@ -37,49 +42,52 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
+    # Text me HTML tags (<b>, <i>) use kiye gaye hain
     welcome_text = (
         "╭━━━━━━━━━━━━━━━━━━━━━━━━━✦\n"
-        "┃ 👋 **Welcome to Classplus Extractor Bot!**\n"
-        "┃ 🚀 *Unlock and extract your courses instantly.*\n"
+        "┃ 👋 <b>Welcome to Classplus Extractor Bot!</b>\n"
+        "┃ 🚀 <i>Unlock and extract your courses instantly.</i>\n"
         "╰━━━━━━━━━━━━━━━━━━━━━━━━━✦\n\n"
-        "✨ **Niche diye gaye buttons ka use karke bot ko aaram se chalayein:**"
+        "✨ <b>Niche diye gaye buttons ka use karke bot ko aaram se chalayein:</b>"
     )
     
-    # Check ki start command message se aaya hai ya button click se back hoke aaya hai
-    if update.message:
-        await update.message.reply_text(welcome_text, reply_markup=reply_markup, parse_mode='Markdown')
-    elif update.callback_query:
-        await update.callback_query.message.edit_text(welcome_text, reply_markup=reply_markup, parse_mode='Markdown')
+    try:
+        if update.message:
+            await update.message.reply_text(welcome_text, reply_markup=reply_markup, parse_mode='HTML')
+        elif update.callback_query:
+            await update.callback_query.message.edit_text(welcome_text, reply_markup=reply_markup, parse_mode='HTML')
+    except Exception as e:
+        logging.error(f"Error in start command: {e}")
 
-# ---------- Callback Query Handler (Button Clicking Logic) ----------
+# ---------- Callback Query Handler ----------
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user_id = update.effective_user.id
     
-    if query.data == "btn_login_help":
-        login_text = (
-            "🔐 **Login Kaise Karein:**\n\n"
-            "👉 **Method 1: OTP Login**\n"
-            "Niche diye gaye format me chat me message send karein:\n"
-            "`/login cp <orgCode> <mobile>`\n"
-            "*Example:* `/login cp iqvqn 6205734170`\n\n"
-            "👉 **Method 2: Token Login**\n"
-            "Niche diye gaye format me message send karein:\n"
-            "`/login cp <your_token>`"
-        )
-        keyboard = [[InlineKeyboardButton("🔙 Back to Main Menu", callback_data="btn_main_menu")]]
-        await query.message.edit_text(login_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-        
-    elif query.data == "btn_courses":
-        session = db.get_session(user_id, "cp")
-        if not session or not session.get('token'):
+    try:
+        if query.data == "btn_login_help":
+            login_text = (
+                "🔐 <b>Login Kaise Karein:</b>\n\n"
+                "👉 <b>Method 1: OTP Login</b>\n"
+                "Niche diye gaye format me chat me message send karein:\n"
+                "<code>/login cp &lt;orgCode&gt; &lt;mobile&gt;</code>\n"
+                "<i>Example:</i> <code>/login cp iqvqn 6205734170</code>\n\n"
+                "👉 <b>Method 2: Token Login</b>\n"
+                "Niche diye gaye format me message send karein:\n"
+                "<code>/login cp &lt;your_token&gt;</code>"
+            )
             keyboard = [[InlineKeyboardButton("🔙 Back to Main Menu", callback_data="btn_main_menu")]]
-            await query.message.edit_text("❌ **Aap logged in nahi hain!**\nPehle login instructions wale button par click karke login karein.", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-            return
-        
-        token = session['token']
-        try:
+            await query.message.edit_text(login_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+            
+        elif query.data == "btn_courses":
+            session = db.get_session(user_id, "cp")
+            if not session or not session.get('token'):
+                keyboard = [[InlineKeyboardButton("🔙 Back to Main Menu", callback_data="btn_main_menu")]]
+                await query.message.edit_text("❌ <b>Aap logged in nahi hain!</b>\nPehle login instructions wale button par click karke login karein.", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+                return
+            
+            token = session['token']
             await query.message.edit_text("⏳ Fetching your purchased courses...")
             app = app_registry.get("cp")
             courses_list = await app.get_courses(token)
@@ -88,35 +96,34 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.message.edit_text("📋 No purchased courses found.", reply_markup=InlineKeyboardMarkup(keyboard))
                 return
             
-            msg = "📋 **Your Purchased Courses:**\n\n"
+            msg = "📋 <b>Your Purchased Courses:</b>\n\n"
             for c in courses_list:
-                msg += f"🆔 Code: `{c['id']}`\n📚 Name: *{c['name']}* (₹{c['finalPrice']})\n\n"
+                msg += f"🆔 Code: <code>{c['id']}</code>\n📚 Name: <b>{c['name']}</b> (₹{c['finalPrice']})\n\n"
             
-            msg += "✨ *Course content extract karne ke liye niche diye gaye Extract button par click karein ya `/extract cp <courseId>` write karein.*"
+            msg += "✨ <i>Course content extract karne ke liye niche diye gaye Extract button par click karein ya <code>/extract cp &lt;courseId&gt;</code> write karein.</i>"
             
             context.user_data['courses'] = courses_list
             keyboard = [
                 [InlineKeyboardButton("📄 Extract Content", callback_data="btn_extract_help")],
                 [InlineKeyboardButton("🔙 Back to Main Menu", callback_data="btn_main_menu")]
             ]
-            await query.message.edit_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-        except Exception as e:
-            keyboard = [[InlineKeyboardButton("🔙 Back to Main Menu", callback_data="btn_main_menu")]]
-            await query.message.edit_text(f"❌ Error fetching courses: {e}", reply_markup=InlineKeyboardMarkup(keyboard))
+            await query.message.edit_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
             
-    elif query.data == "btn_extract_help":
-        extract_text = (
-            "📄 **Course Content Extract Kaise Karein:**\n\n"
-            "Niche diye gaye format me normal chat me text text send karein:\n"
-            "`/extract cp <courseId>`\n\n"
-            "💡 *Tip: Course ID aapko 'My Courses' wale section se mil jayegi.*"
-        )
-        keyboard = [[InlineKeyboardButton("🔙 Back to Main Menu", callback_data="btn_main_menu")]]
-        await query.message.edit_text(extract_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-        
-    elif query.data == "btn_main_menu":
-        await start(update, context)
-
+        elif query.data == "btn_extract_help":
+            extract_text = (
+                "📄 <b>Course Content Extract Kaise Karein:</b>\n\n"
+                "Niche diye gaye format me normal chat me text send karein:\n"
+                "<code>/extract cp &lt;courseId&gt;</code>\n\n"
+                "💡 <i>Tip: Course ID aapko 'My Courses' wale section se mil jayegi.</i>"
+            )
+            keyboard = [[InlineKeyboardButton("🔙 Back to Main Menu", callback_data="btn_main_menu")]]
+            await query.message.edit_text(extract_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+            
+        elif query.data == "btn_main_menu":
+            await start(update, context)
+            
+    except Exception as e:
+        logging.error(f"Error in button_handler: {e}")
 # ---------- Existing Command Functions ----------
 async def login(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = update.message.text.split()
