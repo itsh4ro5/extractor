@@ -282,7 +282,7 @@ def main():
     # Flask server ko background thread me chalayenge
     threading.Thread(target=run_web, daemon=True).start()
     
-    # Bot application build karein
+    CLOUDFLARE_URL = "https://proud-night-5540.itsh4r06.workers.dev/bot"
     # Bot application build karein (With Increased Timeouts for Cloud)
     app = (
         Application.builder()
