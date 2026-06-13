@@ -1,10 +1,8 @@
-import os, asyncio, threading, logging
-import subprocess
-import json
+import os, asyncio, threading, logging, subprocess
 from flask import Flask
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-import pyromod.listen  # Ye module chat.ask() ko enable karta hai
+import pyromod.listen
 
 from apps.classplus import ClassplusApp
 from core.database import Database
@@ -15,7 +13,7 @@ logging.basicConfig(
 )
 logging.getLogger("pyrogram").setLevel(logging.WARNING)
 
-# ---------- ENV Variables (HG Secrets) ----------
+# ---------- ENV Variables ----------
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 API_ID = int(os.environ.get("API_ID", "0"))
 API_HASH = os.environ.get("API_HASH", "")
@@ -23,6 +21,10 @@ MONGO_URI = os.environ.get("MONGO_URI", "")
 
 app_registry = {"cp": ClassplusApp()}
 db = Database(MONGO_URI)
+
+# ---------- Task Tracking Variables ----------
+stop_flags = {}
+active_processes = {}
 
 # ---------- Web Server (Hugging Face) ----------
 web = Flask(__name__)
@@ -40,6 +42,38 @@ app = Client(
     bot_token=BOT_TOKEN
 )
 
+# ---------- Helper: Get Video Duration ----------
+def get_video_info(file_path):
+    try:
+        cmd = [
+            "ffprobe", "-v", "error", "-show_entries",
+            "format=duration", "-of",
+            "default=noprint_wrappers=1:nokey=1", file_path
+        ]
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        return int(float(result.stdout.strip()))
+    except Exception:
+        return 0
+
+# ---------- Stop Command ----------
+@app.on_message(filters.command("stop"))
+async def stop_cmd(client, message):
+    user_id = message.from_user.id
+    
+    if user_id in stop_flags and not stop_flags[user_id]:
+        stop_flags[user_id] = True 
+        
+        process = active_processes.get(user_id)
+        if process:
+            try:
+                process.kill()
+            except Exception:
+                pass
+                
+        await message.reply("🛑 **Stop command received!** Current task aur aage ke downloads rok diye gaye hain.")
+    else:
+        await message.reply("⚠️ Koi active task nahi chal raha hai jise roka jaye.")
+
 # ---------- Start Command ----------
 @app.on_message(filters.command("start"))
 async def start_cmd(client, message):
@@ -56,7 +90,6 @@ async def start_cmd(client, message):
     )
     await message.reply(welcome_text, reply_markup=keyboard)
 
-# ---------- Interactive Login Flow ----------
 # ---------- Interactive Login Flow ----------
 @app.on_callback_query(filters.regex("btn_cp"))
 async def cp_login(client, callback_query):
@@ -76,7 +109,6 @@ async def cp_login(client, callback_query):
             otp_res = await chat.ask("📱 Send the OTP received on mobile:")
             otp = otp_res.text.strip()
             
-            # FIXED: 'chat.send_message' se 'client.send_message' kar diya gaya hai
             msg = await client.send_message(chat.id, "⏳ Verifying...")
             
             result = await cp_app.verify_otp(
@@ -143,11 +175,11 @@ async def extract_cmd(client, message):
 @app.on_message(filters.command("drm"))
 async def drm_cmd(client, message):
     chat = message.chat
+    user_id = message.from_user.id
     
     try:
         txt_msg = await chat.ask("📄 **Step 1:** Please send the extracted `.txt` file.")
         if not txt_msg.document or not txt_msg.document.file_name.endswith('.txt'):
-            # FIXED YAHAN BHI
             return await client.send_message(chat.id, "❌ Please send a valid .txt file. Run /drm again.")
             
         file_name = txt_msg.document.file_name
@@ -182,18 +214,22 @@ async def drm_cmd(client, message):
         chat_msg = await chat.ask("📢 **Step 5:** Enter Target Channel's Chat ID (e.g., `-100123456789`):\n*(Bot must be admin!)*")
         target_chat_id = int(chat_msg.text.strip())
         
-        await client.send_message(chat.id, "🚀 **All set!** The bulk download & HD upload process has started in the background.")
+        await client.send_message(chat.id, "🚀 **All set!** Process started. Agar kabhi task rokna ho toh `/stop` bhejein.")
         
-        asyncio.create_task(process_drm_upload(client, chat.id, parsed_links, start_idx, quality, ext_name, target_chat_id, batch_name))
+        stop_flags[user_id] = False 
+        
+        asyncio.create_task(process_drm_upload(client, chat.id, user_id, parsed_links, start_idx, quality, ext_name, target_chat_id, batch_name))
     
     except Exception as e:
         await client.send_message(chat.id, f"❌ DRM Setup Cancelled or Failed: {e}")
 
-# ---------- BATCH_NAME PARAMETER ADD KIYA GAYA ----------
-async def process_drm_upload(client, user_chat_id, links, start_idx, quality, ext_name, target_chat_id, batch_name):
+async def process_drm_upload(client, user_chat_id, user_id, links, start_idx, quality, ext_name, target_chat_id, batch_name):
     for i in range(start_idx, len(links)):
+        if stop_flags.get(user_id, False):
+            await client.send_message(user_chat_id, "🛑 Uploading loop has been successfully stopped.")
+            break
+            
         item = links[i]
-        
         topic = "General"
         title = item['name'] 
         
@@ -202,7 +238,6 @@ async def process_drm_upload(client, user_chat_id, links, start_idx, quality, ex
             topic = parts[0].replace("[", "").strip()
             title = parts[1].strip()
 
-        # Naya Professional Caption Format (Ab batch_name TXT file se aayega)
         caption = (
             f"**Index:** {i+1}\n\n"
             f"**Title:** `{title}`\n\n"
@@ -222,41 +257,47 @@ async def process_drm_upload(client, user_chat_id, links, start_idx, quality, ex
                     async with sess.get(url) as r:
                         with open(filename, 'wb') as f: f.write(await r.read())
                 
-                await status_msg.edit_text(f"📤 Uploading PDF: {title}")
-                upload_name = f"{title}.pdf"
-                os.rename(filename, upload_name)
-                
-                await client.send_document(target_chat_id, document=upload_name, caption=caption)
-                os.remove(upload_name)
+                if not stop_flags.get(user_id, False):
+                    await status_msg.edit_text(f"📤 Uploading PDF: {title}")
+                    upload_name = f"{title}.pdf"
+                    os.rename(filename, upload_name)
+                    
+                    await client.send_document(target_chat_id, document=upload_name, caption=caption)
+                    os.remove(upload_name)
+                else:
+                    os.remove(filename)
                 
             else:
                 filename = f"Vid_{i}.mp4"
-                fmt = f"bestvideo[height<={quality}]+bestaudio/best"
+                fmt = f"bestvideo[height<={quality}]+bestaudio/best/best"
                 
-                # Thumbnail Extraction Command
                 cmd = [
                     "yt-dlp", "--no-warnings", 
                     "-f", fmt, 
                     "--merge-output-format", "mp4", 
-                    "--write-thumbnail", 
                     "-o", filename, 
                     url
                 ]
                 
                 process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-                await process.communicate()
+                active_processes[user_id] = process 
+                
+                stdout, stderr = await process.communicate()
+                active_processes[user_id] = None 
+                
+                if stop_flags.get(user_id, False):
+                    if os.path.exists(filename): os.remove(filename)
+                    await status_msg.delete()
+                    continue
                 
                 if process.returncode == 0 and os.path.exists(filename):
                     await status_msg.edit_text(f"📤 Uploading HD Video: {title}...")
                     
                     duration = get_video_info(filename)
                     
-                    actual_thumb = None
-                    for ext in ['.jpg', '.webp', '.png']:
-                        test_thumb = filename.replace('.mp4', ext)
-                        if os.path.exists(test_thumb):
-                            actual_thumb = test_thumb
-                            break
+                    thumb_name = f"Thumb_{i}.jpg"
+                    os.system(f"ffmpeg -hide_banner -loglevel error -i '{filename}' -ss 00:00:02 -vframes 1 '{thumb_name}' -y")
+                    actual_thumb = thumb_name if os.path.exists(thumb_name) else None
                     
                     upload_name = f"{title}.mp4"
                     os.rename(filename, upload_name)
@@ -273,23 +314,26 @@ async def process_drm_upload(client, user_chat_id, links, start_idx, quality, ex
                     os.remove(upload_name)
                     if actual_thumb: os.remove(actual_thumb)
                 else:
-                    await client.send_message(user_chat_id, f"❌ Download failed for: {title}")
+                    error_text = stderr.decode()[:200] if stderr else "Unknown Error"
+                    await client.send_message(user_chat_id, f"❌ Download failed for: {title}\n**Reason:** `{error_text}`")
                     
             await status_msg.delete()
             
         except Exception as e:
             await client.send_message(user_chat_id, f"❌ Error on {title}: {e}")
-            for f in [f"Vid_{i}.mp4", f"Doc_{i}.pdf", f"{title}.mp4", f"{title}.pdf"]:
+            for f in [f"Vid_{i}.mp4", f"Doc_{i}.pdf", f"{title}.mp4", f"{title}.pdf", f"Thumb_{i}.jpg"]:
                 if os.path.exists(f): os.remove(f)
             
-    await client.send_message(user_chat_id, "🎉 **DRM Upload Task Completed Successfully!**")
+    if not stop_flags.get(user_id, False):
+        await client.send_message(user_chat_id, "🎉 **DRM Upload Task Completed Successfully!**")
+    
+    stop_flags[user_id] = False
+    active_processes[user_id] = None
 
 # ---------- MAIN EXECUTION ----------
 def main():
-    # Web server start
     threading.Thread(target=run_web, daemon=True).start()
     print("Starting Pyrogram Bot...")
-    # App run (handles event loop internally)
     app.run()
 
 if __name__ == "__main__":
