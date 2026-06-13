@@ -270,10 +270,15 @@ async def generate_content_txt(course_info, items, token, app):
     return '\n'.join(lines)
 
 # ---------- MAIN ----------
-async def main():
+# ---------- MAIN ----------
+def main():
+    # Flask server ko background thread me chalayenge
     threading.Thread(target=run_web, daemon=True).start()
+    
+    # Bot application build karein
     app = Application.builder().token(BOT_TOKEN).build()
 
+    # Handlers add karein
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('login', login)],
         states={WAIT_OTP: [MessageHandler(filters.TEXT & ~filters.COMMAND, otp_input)]},
@@ -283,12 +288,12 @@ async def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("courses", courses))
     app.add_handler(CommandHandler("extract", extract))
-    
-    # Callback query handler add kiya taaki button work karein
     app.add_handler(CallbackQueryHandler(button_handler))
 
     print("Bot polling...")
-    await app.run_polling()
+    # run_polling() khud sync hai, isliye isme await nahi lagega
+    app.run_polling()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # Yaha normal main() call hoga, asyncio.run() nahi
+    main()
