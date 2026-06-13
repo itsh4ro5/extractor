@@ -1,4 +1,6 @@
 import os, asyncio, threading, logging
+import subprocess
+import json
 from flask import Flask
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -137,6 +139,9 @@ async def extract_cmd(client, message):
 # ==========================================
 # 🚀 2GB HD DRM UPLOADER FLOW (TXT -> CHANNEL)
 # ==========================================
+# ==========================================
+# 🚀 2GB HD DRM UPLOADER FLOW (TXT -> CHANNEL)
+# ==========================================
 @app.on_message(filters.command("drm"))
 async def drm_cmd(client, message):
     chat = message.chat
@@ -146,6 +151,10 @@ async def drm_cmd(client, message):
         txt_msg = await chat.ask("📄 **Step 1:** Please send the extracted `.txt` file.")
         if not txt_msg.document or not txt_msg.document.file_name.endswith('.txt'):
             return await chat.send_message("❌ Please send a valid .txt file. Run /drm again.")
+            
+        # 🔥 YAHAN BATCH NAME DYNAMICALLY NIKALA GAYA HAI TXT FILE KE NAAM SE
+        file_name = txt_msg.document.file_name
+        batch_name = file_name.rsplit('.', 1)[0].strip() # '.txt' hata kar batch name banaya
             
         file_path = await txt_msg.download()
         with open(file_path, 'r', encoding='utf-8') as f:
@@ -165,7 +174,7 @@ async def drm_cmd(client, message):
             return await chat.send_message("❌ No valid links found in the TXT file.")
             
         # Step 2: Get Index
-        idx_msg = await chat.ask(f"✅ Found **{len(parsed_links)}** items.\n\n🔢 **Step 2:** Enter Starting Index Number (e.g., `1`):")
+        idx_msg = await chat.ask(f"✅ Found **{len(parsed_links)}** items in `{batch_name}`.\n\n🔢 **Step 2:** Enter Starting Index Number (e.g., `1`):")
         start_idx = int(idx_msg.text.strip()) - 1
         
         # Step 3: Get Quality
@@ -180,22 +189,38 @@ async def drm_cmd(client, message):
         chat_msg = await chat.ask("📢 **Step 5:** Enter Target Channel's Chat ID (e.g., `-100123456789`):\n*(Bot must be admin!)*")
         target_chat_id = int(chat_msg.text.strip())
         
-        await chat.send_message("🚀 **All set!** The bulk download & 2GB upload process has started in the background.")
+        await chat.send_message("🚀 **All set!** The bulk download & HD upload process has started in the background.")
         
-        # Background process start
-        asyncio.create_task(process_drm_upload(client, chat.id, parsed_links, start_idx, quality, ext_name, target_chat_id))
+        # Background process start (Yahan batch_name bhi pass kar diya)
+        asyncio.create_task(process_drm_upload(client, chat.id, parsed_links, start_idx, quality, ext_name, target_chat_id, batch_name))
     
     except Exception as e:
         await chat.send_message(f"❌ DRM Setup Cancelled or Failed: {e}")
 
-async def process_drm_upload(client, user_chat_id, links, start_idx, quality, ext_name, target_chat_id):
+# ---------- BATCH_NAME PARAMETER ADD KIYA GAYA ----------
+async def process_drm_upload(client, user_chat_id, links, start_idx, quality, ext_name, target_chat_id, batch_name):
     for i in range(start_idx, len(links)):
         item = links[i]
-        item_name = item['name']
-        url = item['url']
-        caption = f"🎥 **{item_name}**\n\n📤 **Extracted by:** {ext_name}"
         
-        status_msg = await client.send_message(user_chat_id, f"📥 Downloading ({i+1}/{len(links)}): {item_name}")
+        topic = "General"
+        title = item['name'] 
+        
+        if "]" in item['name']:
+            parts = item['name'].split("]", 1)
+            topic = parts[0].replace("[", "").strip()
+            title = parts[1].strip()
+
+        # Naya Professional Caption Format (Ab batch_name TXT file se aayega)
+        caption = (
+            f"**Index:** {i+1}\n\n"
+            f"**Title:** `{title}`\n\n"
+            f"**Topic:** {topic}\n\n"
+            f"**Batch:** {batch_name}\n\n"
+            f"**Extracted by:** {ext_name}"
+        )
+        
+        url = item['url']
+        status_msg = await client.send_message(user_chat_id, f"📥 Downloading ({i+1}/{len(links)}): {title}")
         
         try:
             if item['is_pdf']:
@@ -205,31 +230,65 @@ async def process_drm_upload(client, user_chat_id, links, start_idx, quality, ex
                     async with sess.get(url) as r:
                         with open(filename, 'wb') as f: f.write(await r.read())
                 
-                await status_msg.edit_text(f"📤 Uploading PDF to channel: {item_name}")
-                await client.send_document(target_chat_id, document=filename, caption=caption)
-                os.remove(filename)
+                await status_msg.edit_text(f"📤 Uploading PDF: {title}")
+                upload_name = f"{title}.pdf"
+                os.rename(filename, upload_name)
+                
+                await client.send_document(target_chat_id, document=upload_name, caption=caption)
+                os.remove(upload_name)
                 
             else:
                 filename = f"Vid_{i}.mp4"
                 fmt = f"bestvideo[height<={quality}]+bestaudio/best"
-                cmd = ["yt-dlp", "--no-warnings", "-f", fmt, "--merge-output-format", "mp4", "-o", filename, url]
+                
+                # Thumbnail Extraction Command
+                cmd = [
+                    "yt-dlp", "--no-warnings", 
+                    "-f", fmt, 
+                    "--merge-output-format", "mp4", 
+                    "--write-thumbnail", 
+                    "-o", filename, 
+                    url
+                ]
                 
                 process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
                 await process.communicate()
                 
                 if process.returncode == 0 and os.path.exists(filename):
-                    await status_msg.edit_text(f"📤 Uploading HD Video to channel: {item_name}...")
-                    await client.send_video(target_chat_id, video=filename, caption=caption, supports_streaming=True)
-                    os.remove(filename)
+                    await status_msg.edit_text(f"📤 Uploading HD Video: {title}...")
+                    
+                    duration = get_video_info(filename)
+                    
+                    actual_thumb = None
+                    for ext in ['.jpg', '.webp', '.png']:
+                        test_thumb = filename.replace('.mp4', ext)
+                        if os.path.exists(test_thumb):
+                            actual_thumb = test_thumb
+                            break
+                    
+                    upload_name = f"{title}.mp4"
+                    os.rename(filename, upload_name)
+                    
+                    await client.send_video(
+                        chat_id=target_chat_id, 
+                        video=upload_name, 
+                        caption=caption, 
+                        duration=duration,          
+                        thumb=actual_thumb,         
+                        supports_streaming=True
+                    )
+                    
+                    os.remove(upload_name)
+                    if actual_thumb: os.remove(actual_thumb)
                 else:
-                    await client.send_message(user_chat_id, f"❌ Download failed for: {item_name}")
+                    await client.send_message(user_chat_id, f"❌ Download failed for: {title}")
                     
             await status_msg.delete()
             
         except Exception as e:
-            await client.send_message(user_chat_id, f"❌ Error on {item_name}: {e}")
-            if os.path.exists(f"Vid_{i}.mp4"): os.remove(f"Vid_{i}.mp4")
-            if os.path.exists(f"Doc_{i}.pdf"): os.remove(f"Doc_{i}.pdf")
+            await client.send_message(user_chat_id, f"❌ Error on {title}: {e}")
+            for f in [f"Vid_{i}.mp4", f"Doc_{i}.pdf", f"{title}.mp4", f"{title}.pdf"]:
+                if os.path.exists(f): os.remove(f)
             
     await client.send_message(user_chat_id, "🎉 **DRM Upload Task Completed Successfully!**")
 
