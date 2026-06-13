@@ -14,26 +14,24 @@ RUN apt-get update && apt-get install -y \
 # Set work directory
 WORKDIR /app
 
-# Copy all files from your repository into the container
-COPY . /app
+# Pehle sirf requirements copy karo (taaki docker cache efficiently kaam kare)
+COPY requirements.txt .
 
 # Install Python dependencies
-RUN pip install --no-cache-dir \
-    playwright aiohttp aiofiles \
-    python-telegram-bot==20.0 pycryptodome \
-    yt-dlp
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Install Chromium browser for Playwright
 RUN python -m playwright install chromium
 
-# Expose port if your bot also runs a web server (optional)
-# EXPOSE 7860
+# Ab baaki saare files copy karo
+COPY . .
+
+# Hugging Face health check ke liye port expose karna zaruri hai
+EXPOSE 7860
 
 # Environment variables (Hugging Face secrets will override these)
 ENV BOT_TOKEN=""
-ENV CHANNEL_ID=""
-ENV EMAIL=""
-ENV PASSWORD=""
+ENV MONGO_URI=""
 
-# Command to run your main script
-CMD ["python", "main.py"]
+# Command to run your main script (Humari file bot.py hai)
+CMD ["python", "bot.py"]
