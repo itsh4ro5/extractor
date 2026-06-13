@@ -287,6 +287,7 @@ def main():
     app = (
         Application.builder()
         .token(BOT_TOKEN)
+        .base_url(CLOUDFLARE_URL)  # <--- YE LINE ADD KARNA ZARURI HAI
         .connect_timeout(30.0)
         .read_timeout(30.0)
         .write_timeout(30.0)
