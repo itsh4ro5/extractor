@@ -1,14 +1,13 @@
 import asyncio, aiohttp, re, base64, logging, os
 from urllib.parse import quote
 from yarl import URL
-from apps.base import BaseExtractor
 from core.crypto import encrypt_url
 
 MAX_CONCURRENT_REQUESTS = 20
 
-class PWExtractor(BaseExtractor):
+# YAHAN CHANGE HUA HAI: BaseExtractor hata diya gaya hai
+class PWExtractor:
     def __init__(self):
-        super().__init__()
         self.platform_name = "PhysicsWallah"
 
     async def can_handle(self, url: str) -> bool:
@@ -51,12 +50,10 @@ class PWExtractor(BaseExtractor):
             if resp.status in (301, 302, 303, 307, 308): return resp.headers.get("Location")
             return None
 
-    # YAHAN CHANGE HUA HAI: Ab jwt_token aur session_cookie receive karega
     async def extract(self, url: str, status_msg, jwt_token: str, session_cookie: str) -> tuple[str, str]:
         jar = aiohttp.CookieJar()
         jar.update_cookies({"session": session_cookie}, URL("https://rarestudy.in"))
         
-        # Dynamic Headers
         pw_headers = {
             "authorization": f"Bearer {jwt_token}",
             "client-version": "538", 
