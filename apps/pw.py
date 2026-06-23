@@ -1,11 +1,10 @@
-import asyncio, aiohttp, re, base64, logging, os
+import asyncio, aiohttp, re, base64, time, os
 from urllib.parse import quote
 from yarl import URL
 from core.crypto import encrypt_url
 
 MAX_CONCURRENT_REQUESTS = 20
 
-# YAHAN CHANGE HUA HAI: BaseExtractor hata diya gaya hai
 class PWExtractor:
     def __init__(self):
         self.platform_name = "PhysicsWallah"
@@ -50,29 +49,47 @@ class PWExtractor:
             if resp.status in (301, 302, 303, 307, 308): return resp.headers.get("Location")
             return None
 
-    async def extract(self, url: str, status_msg, jwt_token: str, session_cookie: str) -> tuple[str, str]:
+    # YAHAN CHANGE HUA HAI: user_name aur Counters add kiye hain
+    async def extract(self, url: str, status_msg, jwt_token: str, session_cookie: str, choice: str, user_name: str) -> tuple[str, str]:
         jar = aiohttp.CookieJar()
         jar.update_cookies({"session": session_cookie}, URL("https://rarestudy.in"))
-        
-        pw_headers = {
-            "authorization": f"Bearer {jwt_token}",
-            "client-version": "538", 
-            "content-type": "application/json"
-        }
+        pw_headers = {"authorization": f"Bearer {jwt_token}", "client-version": "538", "content-type": "application/json"}
         
         try:
             async with aiohttp.ClientSession(cookie_jar=jar, headers={"User-Agent": "Mozilla/5.0"}) as session:
                 batch_id = await self.resolve_batch_id(session, url)
-                await status_msg.edit_text(f"[*] Platform: {self.platform_name}\n[*] ID: `{batch_id}`\n⏳ Scanning modules...")
-                
                 details = await self._fetch_json(session, f"https://api.penpencil.co/v3/batches/{batch_id}/details", pw_headers)
                 batch_name = self.safe_name(details.get("data", {}).get("name", batch_id))
-                file_name = f"INDEX_{batch_name}.txt"
+                file_name = f"{batch_name}.txt" # Sirf batch name
+                
                 sem = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
                 
-                with open(file_name, "w", encoding="utf-8") as f:
+                # Counters & Variables
+                vid_count = 0
+                pdf_count = 0
+                all_links = []
+                last_edit_time = time.time()
+
+                async def update_status(current_sub):
+                    nonlocal last_edit_time
+                    if time.time() - last_edit_time > 10:
+                        try:
+                            await status_msg.edit_text(
+                                f"⏳ **Extraction in Progress...**\n\n"
+                                f"📘 **Subject:** `{current_sub}`\n"
+                                f"🎥 **Videos Extracted:** `{vid_count}`\n"
+                                f"📄 **PDFs Extracted:** `{pdf_count}`\n\n"
+                                f"*(Live updating every 10 seconds)*"
+                            )
+                            last_edit_time = time.time()
+                        except: pass
+
+                # 1. MAIN CONTENT
+                if choice in ['1', '3']:
                     for sub in details.get("data", {}).get("subjects", []):
                         sid, sname = sub["_id"], self.safe_name(sub["subject"])
+                        await update_status(sname)
+                        
                         topics = []; pg = 1
                         while True:
                             tdata = await self._fetch_json(session, f"https://api.penpencil.co/v2/batches/{batch_id}/subject/{sid}/topics?page={pg}", pw_headers)
@@ -107,7 +124,10 @@ class PWExtractor:
                                         return None
 
                                     for res in await asyncio.gather(*[fetch_vid(i) for i in items]):
-                                        if res: f.write(res); f.flush()
+                                        if res: 
+                                            all_links.append(res)
+                                            if "TYPE: .mpd" in res: vid_count += 1
+                                    await update_status(sname)
                                     if len(items) < 20: break
                                     cpg += 1
                                     
@@ -140,48 +160,79 @@ class PWExtractor:
                                         return links
 
                                     for link_list in await asyncio.gather(*[fetch_pdf(i) for i in items]):
-                                        for res in link_list: f.write(res); f.flush()
+                                        for res in link_list:
+                                            all_links.append(res)
+                                            if "TYPE: .pdf" in res: pdf_count += 1
+                                    await update_status(sname)
                                     if len(items) < 20: break
                                     cpg += 1
 
-                    prog_id = details.get("data", {}).get("khazanaProgramId")
-                    if prog_id:
-                        filters = await self._fetch_json(session, f"https://api.penpencil.co/v2/programs/{prog_id}/filters?page=1&limit=20", pw_headers)
-                        subjects = [{"_id": o["value"], "name": o["name"]} for f in filters.get("data",{}).get("filters",[]) if f.get("key") == "subjectId" for o in f.get("options",[])[1:]]
-                        for sub in subjects:
-                            sid, sname = sub["_id"], self.safe_name(sub["name"])
-                            ch_data = await self._fetch_json(session, f"https://api.penpencil.co/v2/programs/{prog_id}/subjects/{sid}/chapters/list?page=1&limit=20", pw_headers)
-                            for ch in ch_data.get("data", []):
-                                cid, cname = ch["_id"], self.safe_name(ch.get("name", "Ch"))
-                                top_data = await self._fetch_json(session, f"https://api.penpencil.co/v2/programs/{prog_id}/subjects/{sid}/chapters/{cid}/topics/list?page=1&limit=20", pw_headers)
-                                for top in top_data.get("data", []):
-                                    tid, tname = top["_id"], self.safe_name(top.get("name", "Top"))
-                                    sub_data = await self._fetch_json(session, f"https://api.penpencil.co/v2/programs/{prog_id}/subjects/{sid}/chapters/{cid}/topics/{tid}/contents/sub-topic?page=1&limit=20", pw_headers)
-                                    for st in sub_data.get("data", []):
-                                        stid, stname = st["_id"], self.safe_name(st.get("name", "Sub"))
-                                        full_chap_name = f"{cname} -> {tname} -> {stname}"
-                                        cont = await self._fetch_json(session, f"https://api.penpencil.co/v2/programs/{prog_id}/subjects/{sid}/chapters/{cid}/topics/{tid}/sub-topic/{stid}/contents?page=1&limit=50", pw_headers)
-                                        
-                                        async def fetch_kz(item):
-                                            if item["type"] == "LECTURE":
-                                                d = item["data"]
-                                                video_url = d.get("videoUrl") or d.get("videoDetails", {}).get("embedCode", "")
-                                                title = self.safe_name(d.get("title") or d.get("name") or "VAULT_VID")
-                                                try:
-                                                    async with sem:
-                                                        html = await self._fetch_text(session, f"https://rarestudy.in/khazana-video?parentId={prog_id}&childId={d.get('_id','')}&videoUrl={quote(video_url)}&topicName={quote(title)}")
-                                                        token = re.search(r'const MEDIA_TOKEN\s*=\s*"([^"]+)"', html)
-                                                        if token:
-                                                            v_data = await self._fetch_json(session, f"https://rarestudy.in/v1/videos/video-url-details?mediaToken={quote(token.group(1))}&videoContainerType=DASH")
-                                                            return f"KHAZANA | {sname} | {full_chap_name} | {title} | {encrypt_url(v_data['data']['url'])} | KEY: {v_data['data']['keys'][0].split(':')[1]} | TYPE: .mpd\n"
-                                                except Exception: pass
-                                            elif item["type"] == "NOTES":
-                                                url = (item["data"].get("fileId", {}).get("baseUrl", "") + item["data"].get("fileId", {}).get("key", ""))
-                                                if url: return f"KHAZANA | {sname} | {full_chap_name} | {self.safe_name(item['data'].get('title','DOC'))} | {encrypt_url(url)} | NONE | TYPE: .pdf\n"
-                                            return None
+                # 2. KHAZANA CONTENT
+                prog_id = details.get("data", {}).get("khazanaProgramId")
+                if prog_id and choice in ['2', '3']:
+                    filters = await self._fetch_json(session, f"https://api.penpencil.co/v2/programs/{prog_id}/filters?page=1&limit=20", pw_headers)
+                    subjects = [{"_id": o["value"], "name": o["name"]} for f in filters.get("data",{}).get("filters",[]) if f.get("key") == "subjectId" for o in f.get("options",[])[1:]]
+                    
+                    for sub in subjects:
+                        sid, sname = sub["_id"], self.safe_name(sub["name"])
+                        await update_status(f"Khazana: {sname}")
+                        ch_data = await self._fetch_json(session, f"https://api.penpencil.co/v2/programs/{prog_id}/subjects/{sid}/chapters/list?page=1&limit=20", pw_headers)
+                        for ch in ch_data.get("data", []):
+                            cid, cname = ch["_id"], self.safe_name(ch.get("name", "Ch"))
+                            top_data = await self._fetch_json(session, f"https://api.penpencil.co/v2/programs/{prog_id}/subjects/{sid}/chapters/{cid}/topics/list?page=1&limit=20", pw_headers)
+                            for top in top_data.get("data", []):
+                                tid, tname = top["_id"], self.safe_name(top.get("name", "Top"))
+                                sub_data = await self._fetch_json(session, f"https://api.penpencil.co/v2/programs/{prog_id}/subjects/{sid}/chapters/{cid}/topics/{tid}/contents/sub-topic?page=1&limit=20", pw_headers)
+                                for st in sub_data.get("data", []):
+                                    stid, stname = st["_id"], self.safe_name(st.get("name", "Sub"))
+                                    full_chap_name = f"{cname} -> {tname} -> {stname}"
+                                    cont = await self._fetch_json(session, f"https://api.penpencil.co/v2/programs/{prog_id}/subjects/{sid}/chapters/{cid}/topics/{tid}/sub-topic/{stid}/contents?page=1&limit=50", pw_headers)
+                                    
+                                    async def fetch_kz(item):
+                                        if item["type"] == "LECTURE":
+                                            d = item["data"]
+                                            video_url = d.get("videoUrl") or d.get("videoDetails", {}).get("embedCode", "")
+                                            title = self.safe_name(d.get("title") or d.get("name") or "VAULT_VID")
+                                            try:
+                                                async with sem:
+                                                    html = await self._fetch_text(session, f"https://rarestudy.in/khazana-video?parentId={prog_id}&childId={d.get('_id','')}&videoUrl={quote(video_url)}&topicName={quote(title)}")
+                                                    token = re.search(r'const MEDIA_TOKEN\s*=\s*"([^"]+)"', html)
+                                                    if token:
+                                                        v_data = await self._fetch_json(session, f"https://rarestudy.in/v1/videos/video-url-details?mediaToken={quote(token.group(1))}&videoContainerType=DASH")
+                                                        mpd_url = v_data["data"]["url"]
+                                                        key_hex = v_data["data"]["keys"][0].split(":")[1]
+                                                        return f"KHAZANA | {sname} | {full_chap_name} | {title} | {encrypt_url(mpd_url)} | KEY: {key_hex} | TYPE: .mpd\n"
+                                            except Exception: pass
+                                        elif item["type"] == "NOTES":
+                                            url = (item["data"].get("fileId", {}).get("baseUrl", "") + item["data"].get("fileId", {}).get("key", ""))
+                                            if url: return f"KHAZANA | {sname} | {full_chap_name} | {self.safe_name(item['data'].get('title','DOC'))} | {encrypt_url(url)} | NONE | TYPE: .pdf\n"
+                                        return None
 
-                                        for res in await asyncio.gather(*[fetch_kz(i) for i in cont.get("data", [])]):
-                                            if res: f.write(res); f.flush()
+                                    for res in await asyncio.gather(*[fetch_kz(i) for i in cont.get("data", [])]):
+                                        if res:
+                                            all_links.append(res)
+                                            if "TYPE: .mpd" in res: vid_count += 1
+                                            elif "TYPE: .pdf" in res: pdf_count += 1
+                                    await update_status(f"Khazana: {sname}")
+                
+                # PREPARING FINAL TXT FILE WITH HEADER
+                type_map = {'1': 'Main', '2': 'Khazana', '3': 'Main + Khazana'}
+                ext_type = type_map.get(choice, 'Unknown')
+                
+                header_text = (
+                    f"Batch Name - {batch_name}\n"
+                    f"Type - {ext_type}\n"
+                    f"Number of Video - {vid_count}\n"
+                    f"Number of PDF - {pdf_count}\n"
+                    f"Extracted By - {user_name}\n"
+                    f"==================================================\n\n"
+                )
+                
+                with open(file_name, "w", encoding="utf-8") as f:
+                    f.write(header_text)
+                    for link in all_links:
+                        f.write(link)
+
                 return file_name, None
         except Exception as e:
             return None, str(e)
