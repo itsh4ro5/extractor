@@ -27,27 +27,38 @@ class PWExtractor:
         return re.sub(r'[<>:"/\\|?*]', '_', str(s)).strip('.')[:200]
 
     async def _fetch_text(self, session, url, headers=None, retries=3):
-        for i in range(retries):
-            try:
-                async with session.get(url, headers=headers, timeout=15) as r:
-                    r.raise_for_status()
-                    return await r.text()
-            except Exception as e:
-                if i == retries - 1:
-                    self.last_error = f"⚠️ Text API Failed: {e}"
-                    raise
-                await asyncio.sleep(1)
+    default_headers = {
+        "Referer": "https://rarestudy.in/",
+        "Origin": "https://rarestudy.in",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:152.0) Gecko/20100101 Firefox/152.0"
+    }
+    if headers:
+        default_headers.update(headers)
+    for i in range(retries):
+        try:
+            async with session.get(url, headers=default_headers, timeout=15) as r:
+                r.raise_for_status()
+                return await r.text()
+        except Exception as e:
+            if i == retries - 1: raise
+            await asyncio.sleep(1)
 
+    # _fetch_json को भी इसी तरह
     async def _fetch_json(self, session, url, headers=None, retries=3):
+        default_headers = {
+            "Referer": "https://rarestudy.in/",
+            "Origin": "https://rarestudy.in",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:152.0) Gecko/20100101 Firefox/152.0"
+        }
+        if headers:
+            default_headers.update(headers)
         for i in range(retries):
             try:
-                async with session.get(url, headers=headers, timeout=15) as r:
+                async with session.get(url, headers=default_headers, timeout=15) as r:
                     r.raise_for_status()
                     return await r.json()
             except Exception as e:
-                if i == retries - 1:
-                    self.last_error = f"⚠️ JSON API Failed: {e}"
-                    raise
+                if i == retries - 1: raise
                 await asyncio.sleep(1)
 
     async def resolve_batch_id(self, session, url):
