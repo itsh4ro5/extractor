@@ -1,6 +1,4 @@
 playwright
-aiohttp
-aiofiles
 pyrogram
 tgcrypto
 pyromod
@@ -8,3 +6,7 @@ pycryptodome
 Flask
 pymongo
 yt-dlp
+python-telegram-bot==20.7
+aiohttp==3.9.1
+aiofiles==23.2.1
+yarl==1.9.4
