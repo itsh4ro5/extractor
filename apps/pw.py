@@ -26,24 +26,26 @@ class PWExtractor:
     def safe_name(self, s: str) -> str:
         return re.sub(r'[<>:"/\\|?*]', '_', str(s)).strip('.')[:200]
 
+    # ---------- Fixed: Custom Headers to bypass Cloudflare ----------
     async def _fetch_text(self, session, url, headers=None, retries=3):
-    default_headers = {
-        "Referer": "https://rarestudy.in/",
-        "Origin": "https://rarestudy.in",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:152.0) Gecko/20100101 Firefox/152.0"
-    }
-    if headers:
-        default_headers.update(headers)
-    for i in range(retries):
-        try:
-            async with session.get(url, headers=default_headers, timeout=15) as r:
-                r.raise_for_status()
-                return await r.text()
-        except Exception as e:
-            if i == retries - 1: raise
-            await asyncio.sleep(1)
+        default_headers = {
+            "Referer": "https://rarestudy.in/",
+            "Origin": "https://rarestudy.in",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:152.0) Gecko/20100101 Firefox/152.0"
+        }
+        if headers:
+            default_headers.update(headers)
+        for i in range(retries):
+            try:
+                async with session.get(url, headers=default_headers, timeout=15) as r:
+                    r.raise_for_status()
+                    return await r.text()
+            except Exception as e:
+                if i == retries - 1:
+                    self.last_error = f"⚠️ Text API Failed: {e}"
+                    raise
+                await asyncio.sleep(1)
 
-    # _fetch_json को भी इसी तरह
     async def _fetch_json(self, session, url, headers=None, retries=3):
         default_headers = {
             "Referer": "https://rarestudy.in/",
@@ -58,7 +60,9 @@ class PWExtractor:
                     r.raise_for_status()
                     return await r.json()
             except Exception as e:
-                if i == retries - 1: raise
+                if i == retries - 1:
+                    self.last_error = f"⚠️ JSON API Failed: {e}"
+                    raise
                 await asyncio.sleep(1)
 
     async def resolve_batch_id(self, session, url):
@@ -73,9 +77,11 @@ class PWExtractor:
         url = f"https://rarestudy.in/schedule-details?batchId={batch_id}&subjectId={subject_id}&scheduleId={schedule_id}&tap=note&noteIndex={note_index}&isDpp={'true' if is_dpp else 'false'}"
         try:
             async with session.get(url, allow_redirects=False, timeout=15) as resp:
-                if resp.status in (301, 302, 303, 307, 308): return resp.headers.get("Location")
+                if resp.status in (301, 302, 303, 307, 308):
+                    return resp.headers.get("Location")
                 return None
-        except: return None
+        except:
+            return None
 
     async def _process_in_batches(self, tasks, batch_size=MAX_CONCURRENT_REQUESTS):
         results = []
@@ -84,13 +90,14 @@ class PWExtractor:
             res = await asyncio.gather(*batch, return_exceptions=True)
             for item in res:
                 if not isinstance(item, Exception) and item is not None:
-                    if isinstance(item, list): results.extend(item)
-                    else: results.append(item)
+                    if isinstance(item, list):
+                        results.extend(item)
+                    else:
+                        results.append(item)
                 elif isinstance(item, Exception):
                     logger.debug(f"Task Error: {item}")
         return results
 
-    # Returns (file_name, caption_text, error_message)
     async def extract(self, url: str, status_msg, jwt_token: str, session_cookie: str, choice: str, user_name: str, user_id: int) -> tuple[str, str, str]:
         self.stop_flags[user_id] = False
         self.last_error = "Starting Extraction... 🟢"
@@ -267,7 +274,6 @@ class PWExtractor:
                 type_map = {'1': 'Main', '2': 'Khazana', '3': 'Main + Khazana'}
                 ext_type = type_map.get(choice, 'Unknown')
                 
-                # 🔥 YEH CAPTION BOT KO RETURN HOGA (FILE ME NAHI LIKHEGA) 🔥
                 caption_text = (
                     f"**Batch Name -** `{batch_name}`\n"
                     f"**Batch ID -** `{batch_id}`\n"
@@ -280,7 +286,6 @@ class PWExtractor:
                 if self._should_stop(user_id):
                     caption_text = "⚠️ **EXTRACTION STOPPED (INCOMPLETE DATA)** ⚠️\n\n" + caption_text
 
-                # 🔥 FILE ME SIRF LINKS LIKHE JAYENGE 🔥
                 with open(file_name, "w", encoding="utf-8") as f:
                     for link in all_links:
                         f.write(link)
