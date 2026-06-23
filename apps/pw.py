@@ -27,7 +27,26 @@ class PWExtractor:
         return re.sub(r'[<>:"/\\|?*]', '_', str(s)).strip('.')[:200]
 
     # ---------- Fixed: Custom Headers to bypass Cloudflare ----------
-    async def _fetch_text(self, session, url, headers=None, retries=3):
+async def _fetch_text(self, session, url, headers=None, retries=3):
+    default_headers = {
+        "Referer": "https://rarestudy.in/",
+        "Origin": "https://rarestudy.in",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:152.0) Gecko/20100101 Firefox/152.0"
+    }
+    if headers:
+        default_headers.update(headers)
+    for i in range(retries):
+        try:
+            async with session.get(url, headers=default_headers, timeout=15) as r:
+                r.raise_for_status()
+                return await r.text()
+        except Exception as e:
+            if i == retries - 1:
+                self.last_error = f"⚠️ Text API Failed: {e}"
+                raise
+            await asyncio.sleep(1)
+
+    async def _fetch_json(self, session, url, headers=None, retries=3):
         default_headers = {
             "Referer": "https://rarestudy.in/",
             "Origin": "https://rarestudy.in",
@@ -39,10 +58,10 @@ class PWExtractor:
             try:
                 async with session.get(url, headers=default_headers, timeout=15) as r:
                     r.raise_for_status()
-                    return await r.text()
+                    return await r.json()
             except Exception as e:
                 if i == retries - 1:
-                    self.last_error = f"⚠️ Text API Failed: {e}"
+                    self.last_error = f"⚠️ JSON API Failed: {e}"
                     raise
                 await asyncio.sleep(1)
 
