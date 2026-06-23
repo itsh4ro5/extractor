@@ -226,20 +226,21 @@ async def pw_flow(client, callback_query):
     msg = await client.send_message(chat.id, "⏳ Initializing Fast Scanner Engine...")
 
     try:
-        # Pura data pw.py ko bhej rahe hain (user_id for stop flag and user_name for TXT header)
-        file_name, error = await pw_app.extract(target_id, msg, jwt_token, session_cookie, choice, user_name, user_id)
+        # ✅ Fixed: Unpack three values
+        file_name, caption_text, error = await pw_app.extract(target_id, msg, jwt_token, session_cookie, choice, user_name, user_id)
         
-        if file_name and os.path.exists(file_name):
+        if error:
+            await msg.edit_text(f"❌ PW Extraction Failed:\n`{error}`")
+        elif file_name and os.path.exists(file_name):
             await msg.edit_text("✅ Encryption & Extraction Complete!")
-            # Final Header caption ke sath upload
             await client.send_document(
-                chat_id=chat.id, 
-                document=file_name, 
-                caption=f"🔒 **GHOST Encrypted Index File**\n📂 **Batch:** `{file_name.replace('.txt', '')}`"
+                chat_id=chat.id,
+                document=file_name,
+                caption=caption_text or f"✅ Extracted {file_name}"
             )
             os.remove(file_name)
         else:
-            await msg.edit_text(f"❌ PW Extraction Failed:\n`{error}`")
+            await msg.edit_text("❌ Unknown error: No file generated.")
             
     except Exception as e:
         await msg.edit_text(f"❌ Fatal PW Error:\n`{e}`")
