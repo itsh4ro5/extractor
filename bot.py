@@ -4,19 +4,23 @@ from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import pyromod.listen
 
+# --- Import Apps ---
 from apps.classplus import ClassplusApp
 from apps.pw import PWExtractor 
 from core.database import Database
 
+# ---------- Logging Configuration ----------
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logging.getLogger("pyrogram").setLevel(logging.WARNING)
 logging.getLogger("werkzeug").setLevel(logging.ERROR)
 
+# ---------- ENV Variables ----------
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 API_ID = int(os.environ.get("API_ID", "0"))
 API_HASH = os.environ.get("API_HASH", "")
 MONGO_URI = os.environ.get("MONGO_URI", "")
 
+# Registry for all supported platforms
 app_registry = {
     "cp": ClassplusApp(),
     "pw": PWExtractor()
@@ -24,6 +28,9 @@ app_registry = {
 
 db = Database(MONGO_URI)
 
+# ==========================================
+# 🌐 WEB SERVER (For 24/7 UptimeRobot Ping)
+# ==========================================
 web = Flask(__name__)
 @web.route('/')
 def index():
@@ -33,15 +40,21 @@ def run_web():
     port = int(os.environ.get("PORT", 8080))
     web.run(host='0.0.0.0', port=port)
 
+# ---------- Init Pyrogram Bot ----------
 app = Client("extractor_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
+
+# ==========================================
+# 🟢 1. MAIN MENU (START COMMAND)
+# ==========================================
 @app.on_message(filters.command("start"))
 async def start_cmd(client, message):
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🔑 Login (ClassPlus)", callback_data="login_cp"),
          InlineKeyboardButton("🔑 Login (PW)", callback_data="login_pw")],
         [InlineKeyboardButton("🎓 Extract ClassPlus", callback_data="flow_cp")],
-        [InlineKeyboardButton("📚 Extract PhysicsWallah", callback_data="flow_pw")]
+        [InlineKeyboardButton("📚 Extract PhysicsWallah", callback_data="flow_pw")],
+        [InlineKeyboardButton("👨‍💻 Developer", url="https://t.me/itsh4ro5")]
     ])
     welcome_text = (
         "⚡ **Welcome to GHOST Extractor Bot** ⚡\n\n"
@@ -53,7 +66,7 @@ async def start_cmd(client, message):
 
 
 # ==========================================
-# 🔑 LOGIN FLOWS (Save to MongoDB)
+# 🔑 2. LOGIN FLOWS (Save to MongoDB)
 # ==========================================
 @app.on_callback_query(filters.regex("login_cp"))
 async def cp_login(client, callback_query):
@@ -110,7 +123,7 @@ async def pw_login(client, callback_query):
 
 
 # ==========================================
-# 🚀 EXTRACTION FLOWS (Read from MongoDB)
+# 🚀 3. EXTRACTION FLOWS (Read from MongoDB)
 # ==========================================
 @app.on_callback_query(filters.regex("flow_cp"))
 async def cp_flow(client, callback_query):
@@ -166,6 +179,10 @@ async def pw_flow(client, callback_query):
     await callback_query.answer()
     chat = callback_query.message.chat
     user_id = callback_query.from_user.id
+    
+    # 👤 Username capture karna (Header me daalne ke liye)
+    user_name = f"@{callback_query.from_user.username}" if callback_query.from_user.username else callback_query.from_user.first_name
+    
     pw_app = app_registry["pw"]
 
     # PW ke Tokens Database se nikalna
@@ -179,15 +196,28 @@ async def pw_flow(client, callback_query):
     res = await chat.ask("📚 **PhysicsWallah Extraction**\nKripya PW ka Batch URL ya ID bhejein:")
     target_id = res.text.strip()
 
-    msg = await client.send_message(chat.id, "⏳ Scanning PW Links & Encrypting... Please wait.")
+    # ⚙️ Kya Extract karna hai?
+    choice_msg = await chat.ask(
+        "⚙️ **Kya Extract karna hai?**\n\n"
+        "1️⃣ Main Content\n"
+        "2️⃣ Khazana\n"
+        "3️⃣ Both (Main + Khazana)\n\n"
+        "👉 *Type 1, 2, or 3:*"
+    )
+    choice = choice_msg.text.strip()
+    if choice not in ['1', '2', '3']: 
+        choice = '3'
+
+    msg = await client.send_message(chat.id, "⏳ Initializing Scanner...")
 
     try:
-        # Ab hum dynamically db se laye hue tokens bhej rahe hain!
-        file_name, error = await pw_app.extract(target_id, msg, jwt_token, session_cookie)
+        # Pura data pw.py ko bhejna (Target ID, Live Message, Tokens, Choice, aur Username)
+        file_name, error = await pw_app.extract(target_id, msg, jwt_token, session_cookie, choice, user_name)
         
         if file_name and os.path.exists(file_name):
             await msg.edit_text("✅ Encryption & Extraction Complete!")
-            await client.send_document(chat.id, document=file_name, caption="🔒 GHOST Encrypted Index File (PW)")
+            # Final Header caption ke sath upload
+            await client.send_document(chat.id, document=file_name, caption=f"🔒 GHOST Encrypted Index File\n📂 Batch: {file_name.replace('.txt', '')}")
             os.remove(file_name)
         else:
             await msg.edit_text(f"❌ PW Extraction Failed: {error}")
@@ -199,7 +229,7 @@ async def pw_flow(client, callback_query):
 def main():
     threading.Thread(target=run_web, daemon=True).start()
     print("🔥 Web Server Started! Ready for UptimeRobot.")
-    print("🤖 Starting GHOST Extractor Pyrogram Bot (With PW Token Update)...")
+    print("🤖 Starting GHOST Extractor Pyrogram Bot (Live Status & Naming)...")
     app.run()
 
 if __name__ == "__main__":
