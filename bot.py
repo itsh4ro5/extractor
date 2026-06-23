@@ -6,7 +6,6 @@ import pyromod.listen
 
 # --- Import Apps ---
 from apps.classplus import ClassplusApp
-# Yahan PW ko import kiya gaya hai (jo humne pehle banaya tha)
 from apps.pw import PWExtractor 
 from core.database import Database
 
@@ -15,6 +14,7 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logging.getLogger("pyrogram").setLevel(logging.WARNING)
+logging.getLogger("werkzeug").setLevel(logging.ERROR) # Flask logs ko hide karne ke liye
 
 # ---------- ENV Variables ----------
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
@@ -29,13 +29,18 @@ app_registry = {
 }
 db = Database(MONGO_URI)
 
-# ---------- Web Server (Hugging Face / Render) ----------
+# ==========================================
+# 🌐 WEB SERVER (For 24/7 UptimeRobot Ping)
+# ==========================================
 web = Flask(__name__)
+
 @web.route('/')
 def index():
-    return "GHOST Extractor Bot is Running Successfully!"
+    return "🚀 GHOST Extractor Bot is Alive & Running 24/7!"
+
 def run_web():
-    web.run(host='0.0.0.0', port=7860)
+    port = int(os.environ.get("PORT", 8080))
+    web.run(host='0.0.0.0', port=port)
 
 # ---------- Init Pyrogram Bot ----------
 app = Client(
@@ -156,9 +161,8 @@ async def extract_cmd(client, message):
     elif app_name == "pw":
         pw_app = app_registry["pw"]
         
-        # PW module directly takes URL and returns the text file name
-        # Note: We pass 'msg' so it can edit the status live.
         try:
+            # pw_app.extract ab tuple return karega: (file_name, error_message)
             file_name, error = await pw_app.extract(target_id, msg)
             if file_name and os.path.exists(file_name):
                 await msg.edit_text("✅ Encryption & Extraction Complete! Uploading file...")
@@ -171,8 +175,12 @@ async def extract_cmd(client, message):
 
 # ---------- MAIN EXECUTION ----------
 def main():
+    # Web Server ko background me start karein
     threading.Thread(target=run_web, daemon=True).start()
-    print("Starting GHOST Extractor Pyrogram Bot...")
+    print("🔥 Web Server Started! Ready for UptimeRobot.")
+    
+    # Telegram Bot ko start karein
+    print("🤖 Starting GHOST Extractor Pyrogram Bot...")
     app.run()
 
 if __name__ == "__main__":
