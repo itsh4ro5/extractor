@@ -79,7 +79,7 @@ class PWExtractor:
                     logger.debug(f"Task Error: {item}")
         return results
 
-    # RETURNING (file_name, caption_text, error_message)
+    # Returns (file_name, caption_text, error_message)
     async def extract(self, url: str, status_msg, jwt_token: str, session_cookie: str, choice: str, user_name: str, user_id: int) -> tuple[str, str, str]:
         self.stop_flags[user_id] = False
         self.last_error = "Starting Extraction... 🟢"
@@ -256,7 +256,7 @@ class PWExtractor:
                 type_map = {'1': 'Main', '2': 'Khazana', '3': 'Main + Khazana'}
                 ext_type = type_map.get(choice, 'Unknown')
                 
-                # 🔥 YAHAN CHANGE HUA HAI: Caption Telegram message ke liye ban raha hai, File ke andar nahi jayega!
+                # 🔥 YEH CAPTION BOT KO RETURN HOGA (FILE ME NAHI LIKHEGA) 🔥
                 caption_text = (
                     f"**Batch Name -** `{batch_name}`\n"
                     f"**Batch ID -** `{batch_id}`\n"
@@ -269,14 +269,13 @@ class PWExtractor:
                 if self._should_stop(user_id):
                     caption_text = "⚠️ **EXTRACTION STOPPED (INCOMPLETE DATA)** ⚠️\n\n" + caption_text
 
-                # File ke andar ab SIRF links hi rahenge!
+                # 🔥 FILE ME SIRF LINKS LIKHE JAYENGE 🔥
                 with open(file_name, "w", encoding="utf-8") as f:
                     for link in all_links:
                         f.write(link)
 
-                # Teeno cheezein return karna zaroori hai (file_name, caption_text, error)
                 return file_name, caption_text, None
-        
+            
         except Exception as e:
             err_log = traceback.format_exc()
             return None, None, err_log
